@@ -101,3 +101,23 @@ def test_psi_timeout_must_fit_budget(cfg):
     cfg["psi"]["timeout_seconds"] = 300
     with pytest.raises(ConfigError, match="psi.timeout_seconds: must be smaller than runtime.budget_seconds"):
         validate_config(cfg)
+
+
+def test_llm_cross_checks(tmp_path):
+    import copy
+    from seo_reviewer.config import validate_config, ConfigError
+    import yaml as _y
+    from conftest import REPO_ROOT
+    base = _y.safe_load((REPO_ROOT / "config.yaml").read_text(encoding="utf-8"))
+    for key, value, msg in (("model", "gemini-flash-latest", "pinned model name"),
+                            ("provider", "openai", "only 'gemini'"),
+                            ("endpoint", "https://generativelanguage.googleapis.com/v1beta/models/x:generateContent",
+                             "must contain {model}")):
+        cfg = copy.deepcopy(base)
+        cfg["llm"][key] = value
+        try:
+            validate_config(cfg)
+        except ConfigError as e:
+            assert msg in str(e)
+        else:
+            raise AssertionError(f"llm.{key}={value!r} accepted")

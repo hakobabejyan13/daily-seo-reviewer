@@ -196,6 +196,13 @@ def _cross_checks(cfg: dict[str, Any], errors: list[str]) -> None:
     method = cfg.get("links", {}).get("method")
     if isinstance(method, str) and method.upper() not in ("HEAD", "GET"):
         errors.append(f"links.method: must be HEAD or GET, got {method!r}")
+    llm = cfg.get("llm") if isinstance(cfg.get("llm"), dict) else {}
+    if isinstance(llm.get("provider"), str) and llm["provider"] != "gemini":
+        errors.append(f"llm.provider: only 'gemini' is supported, got {llm['provider']!r}")
+    if isinstance(llm.get("model"), str) and "latest" in llm["model"].lower():
+        errors.append(f"llm.model: use a pinned model name, not a 'latest' alias, got {llm['model']!r}")
+    if isinstance(llm.get("endpoint"), str) and "{model}" not in llm["endpoint"]:
+        errors.append("llm.endpoint: must contain {model}")
     overrides = cfg.get("rules", {}).get("severity_overrides") if isinstance(cfg.get("rules"), dict) else None
     if isinstance(overrides, dict):
         from .rules import validate_overrides  # rules.py has no imports of its own

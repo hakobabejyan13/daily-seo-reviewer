@@ -191,3 +191,48 @@ def test_cli_diff_only_and_compare_to(cfg, tmp_path, capsys):
     assert main_mod.main(["--report-only", "--compare-to", "2026-11-07"]) == 2
     assert main_mod.main(["--diff-only", "--compare-to", "7-11-2026"]) == 2
     assert main_mod.main(["--collect-only", "--compare-to", "2026-11-07"]) == 2
+
+
+def test_run_daily_summary_gemini_and_template(cfg, tmp_path, capsys):
+    from test_summarize import KEY, GeminiSession, answer, error
+    cfg["crawler"]["max_pages"] = 2
+    root = snap.snapshot_root(cfg, tmp_path)
+    # no key -> template, no Gemini request
+    first = main_mod.run_daily(cfg, tmp_path, day="2026-11-07", client=client_for(cfg, link_routes()),
+                               psi_kwargs=psi_kwargs())
+    assert first["summary"]["source"] == "template"
+    assert first["summary"]["reason"] == "GEMINI_API_KEY is not set"
+    assert snap.read_source(root, "2026-11-07", "summary") == first["summary"]
+    assert "Gemini not used: GEMINI\\_API\\_KEY is not set" in first["report"]  # markdown-escaped
+    text = main_mod.format_summary(first)
+    assert "Summary written to" in text and "template (Gemini not used: GEMINI_API_KEY is not set)" in text
+    # Gemini ok on day 2
+    doc_headline = "All stable today."
+    session = GeminiSession(answer(doc_headline, usage={"promptTokenCount": 10, "candidatesTokenCount": 4,
+                                                        "thoughtsTokenCount": 0, "totalTokenCount": 14}))
+    second = main_mod.run_daily(cfg, tmp_path, day="2026-11-08", client=client_for(cfg, link_routes()),
+                                psi_kwargs=psi_kwargs(),
+                                llm_kwargs={"env": {"GEMINI_API_KEY": KEY}, "session": session, "sleep": lambda s: None})
+    assert second["summary"]["source"] == "gemini" and len(session.requests) == 1
+    md = (tmp_path / "reports" / "2026-11-08.md").read_text(encoding="utf-8")
+    assert "## Summary" in md and "Written by Gemini (gemini-2.5-flash)" in md and doc_headline in md
+    text = main_mod.format_summary(second)
+    assert "Gemini gemini-2.5-flash (tokens: prompt 10, output 4, thinking 0)" in text
+    assert KEY not in text and KEY not in md
+    # --report-only keeps the stored Gemini summary (no network)
+    cfg_path = tmp_path / "config.yaml"
+    cfg_path.write_text(yaml.safe_dump(cfg), encoding="utf-8")
+    assert main_mod.main(["--report-only", "--config", str(cfg_path), "--date", "2026-11-08"]) == 0
+    assert "summary: gemini" in capsys.readouterr().out
+    assert "Written by Gemini" in (tmp_path / "reports" / "2026-11-08.md").read_text(encoding="utf-8")
+    # --diff-only rebuilds findings.json; a changed findings.json no longer matches the old summary
+    assert main_mod.main(["--diff-only", "--config", str(cfg_path), "--date", "2026-11-08",
+                          "--compare-to", "2026-11-07"]) == 0
+    capsys.readouterr()
+    doc = snap.read_source(root, "2026-11-08", "findings")
+    doc["headline"] += " (edited)"
+    from seo_reviewer.diff import write_findings
+    write_findings(root, "2026-11-08", doc)
+    assert main_mod.main(["--report-only", "--config", str(cfg_path), "--date", "2026-11-08"]) == 0
+    assert "summary: template" in capsys.readouterr().out
+    assert "summary.json is from an older findings.json" in (tmp_path / "reports" / "2026-11-08.md").read_text(encoding="utf-8")

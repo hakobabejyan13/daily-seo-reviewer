@@ -5,20 +5,24 @@ Usage (from the repo root):
         [--config config.yaml] [--date YYYY-MM-DD] [--compare-to YYYY-MM-DD]
 
 Modes:
-  (default)       collect + diff + report: collect robots.txt, the sitemap,
-                  the on-page crawl, the link check and PageSpeed Insights,
-                  write today's snapshot (UTC date) to storage.snapshot_dir,
-                  apply retention, compare with earlier snapshots and write
-                  findings.json into the same day folder, then write the
-                  markdown report delivery.report_dir/YYYY-MM-DD.md.
+  (default)       collect + diff + summarize + report: collect robots.txt,
+                  the sitemap, the on-page crawl, the link check and
+                  PageSpeed Insights, write today's snapshot (UTC date) to
+                  storage.snapshot_dir, apply retention, compare with earlier
+                  snapshots and write findings.json into the same day folder,
+                  write summary.json (Gemini summary of findings.json, or the
+                  template fallback), then write the markdown report
+                  delivery.report_dir/YYYY-MM-DD.md.
   --collect-only  collect and write the snapshot only (no findings, no report).
   --diff-only     no network: rebuild findings.json for an existing snapshot
-                  (--date, default today). The report is not touched.
+                  (--date, default today). The summary and report are not
+                  touched (a summary.json made for the old findings.json is
+                  then ignored by the report: it uses the template).
   --report-only   no network: rebuild the report from an existing
-                  findings.json (--date, default today).
+                  findings.json and summary.json (--date, default today).
   --compare-to D  compare every source with day D instead of the last day
                   that source was ok (PSI confirmations count from D).
-Later tasks add the LLM summary and delivery.
+Task 9 adds delivery (Telegram).
 
 runtime.budget_seconds is counted from the start of the run; the crawl and
 the link check stop starting new requests once it is used up (record status
@@ -52,6 +56,7 @@ from .config import ConfigError, load_config
 from .diff import build_findings, format_findings, write_findings
 from .http_client import PoliteClient
 from .report import build_report, load_inputs, write_report
+from .summarize import load_summary, summarize, write_summary
 from .snapshot import (SnapshotError, apply_retention, build_meta, parse_day,
                        snapshot_root, utc_today, write_snapshot)
 
@@ -227,22 +232,36 @@ def run_diff(cfg: dict[str, Any], base_dir: Path, day: str, records: dict[str, A
     return {"day": day, "path": path, "findings": doc}
 
 
+def run_summarize(cfg: dict[str, Any], base_dir: Path, day: str, doc: dict[str, Any],
+                  llm_kwargs: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Summary of findings.json (Gemini or template), written to the day's summary.json."""
+    record = summarize(cfg, doc, **(llm_kwargs or {}))
+    path = write_summary(snapshot_root(cfg, base_dir), day, record)
+    return {"day": day, "path": path, "summary": record}
+
+
 def run_report(cfg: dict[str, Any], base_dir: Path, day: str) -> dict[str, Any]:
-    """Build and write reports/DAY.md from that day's findings.json and snapshot."""
-    inputs = load_inputs(snapshot_root(cfg, base_dir), day)
-    text = build_report(inputs["findings"], inputs["meta"], inputs["records"])
+    """Build and write reports/DAY.md from that day's findings.json, summary.json and snapshot."""
+    root = snapshot_root(cfg, base_dir)
+    inputs = load_inputs(root, day)
+    summary = load_summary(root, day, inputs["findings"])
+    text = build_report(inputs["findings"], inputs["meta"], inputs["records"], summary)
     return {"day": day, "path": write_report(cfg, base_dir, day, text), "text": text,
-            "findings": inputs["findings"]}
+            "findings": inputs["findings"], "summary": summary}
 
 
 def run_daily(cfg: dict[str, Any], base_dir: Path, day: str | None = None,
               client: PoliteClient | None = None, now: datetime | None = None,
-              psi_kwargs: dict[str, Any] | None = None, compare_to: str | None = None) -> dict[str, Any]:
-    """Collect + diff + report."""
+              psi_kwargs: dict[str, Any] | None = None, compare_to: str | None = None,
+              llm_kwargs: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Collect + diff + summarize + report."""
     result = run_collect_only(cfg, base_dir, day=day, client=client, now=now, psi_kwargs=psi_kwargs)
     diff = run_diff(cfg, base_dir, result["day"], records=result["records"], compare_to=compare_to)
     result["findings"] = diff["findings"]
     result["findings_path"] = diff["path"]
+    summ = run_summarize(cfg, base_dir, result["day"], diff["findings"], llm_kwargs)
+    result["summary"] = summ["summary"]
+    result["summary_path"] = summ["path"]
     report = run_report(cfg, base_dir, result["day"])
     result["report_path"] = report["path"]
     result["report"] = report["text"]
@@ -251,6 +270,20 @@ def run_daily(cfg: dict[str, Any], base_dir: Path, day: str | None = None,
 
 def format_diff_summary(diff: dict[str, Any]) -> str:
     return "\n".join([f"Findings for {diff['day']} written to {diff['path']}", *format_findings(diff["findings"])])
+
+
+def format_summary_record(rec: dict[str, Any], path: Path | None = None) -> list[str]:
+    where = f" written to {path}" if path else ""
+    if rec["source"] == "gemini":
+        u = rec.get("usage") or {}
+        head = (f"Summary{where}: Gemini {rec['model']} (tokens: prompt {u.get('prompt_tokens')}, "
+                f"output {u.get('output_tokens')}, thinking {u.get('thought_tokens') or 0})")
+    else:
+        head = f"Summary{where}: template (Gemini not used: {rec['reason']})"
+    lines = [head] + [f"    {line}" for line in rec["text"].splitlines()]
+    for p in rec.get("validation_errors") or []:
+        lines.append(f"    rejected Gemini text: {p}")
+    return lines
 
 
 def format_summary(result: dict[str, Any]) -> str:
@@ -282,6 +315,8 @@ def format_summary(result: dict[str, Any]) -> str:
     if "findings" in result:
         lines.append(f"Findings written to {result['findings_path']}")
         lines.extend(format_findings(result["findings"]))
+    if "summary" in result:
+        lines.extend(format_summary_record(result["summary"], result.get("summary_path")))
     if "report_path" in result:
         lines.append(f"Report written to {result['report_path']}")
     return "\n".join(lines)
@@ -317,7 +352,8 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if args.report_only:
             rep = run_report(cfg, base_dir, args.date or utc_today())
-            print(f"Report for {rep['day']} written to {rep['path']} ({rep['findings']['headline']})")
+            print(f"Report for {rep['day']} written to {rep['path']} ({rep['findings']['headline']}; "
+                  f"summary: {rep['summary']['source']})")
             return 0
         if args.diff_only:
             print(format_diff_summary(run_diff(cfg, base_dir, args.date or utc_today(), compare_to=args.compare_to)))

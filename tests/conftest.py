@@ -67,3 +67,10 @@ class FakeClock:
     def sleep(self, s: float) -> None:
         self.sleeps.append(s)
         self.now += s
+
+
+@pytest.fixture(autouse=True)
+def no_gemini_key(monkeypatch):
+    """Tests never call Gemini by accident: the summary uses the template
+    unless a test passes its own env and fake session."""
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)

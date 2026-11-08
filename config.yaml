@@ -71,7 +71,7 @@ llm:
   api_key_env: "GEMINI_API_KEY"
   endpoint: "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
   max_output_tokens: 800
-  thinking_budget: 0         # verify in task 8
+  thinking_budget: 0         # 0 = thinking off (2.5 Flash); live run shows thought tokens in the log
   timeout_seconds: 30
 
 delivery:

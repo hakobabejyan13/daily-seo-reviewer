@@ -1,8 +1,12 @@
 """Report builder: findings.json -> reports/YYYY-MM-DD.md.
 
-Deterministic, no LLM. The report is built only from the day's
-findings.json plus the day's snapshot (meta.json for the run, and a few
-coverage counts from the source records for the source health table).
+Deterministic except for the Summary section at the top. The report is
+built only from the day's findings.json plus the day's snapshot (meta.json
+for the run, a few coverage counts from the source records for the source
+health table, and summary.json for the Summary section). The summary is
+either written by the LLM (checked by summarize.validate_summary: every URL,
+number and finding id is in findings.json) or the deterministic template;
+the section says which one and, for the template, why.
 Every number in the report is copied from those files; this module never
 computes a metric, it only counts and lays out what the diff engine wrote.
 suggested_next_step is printed as the rules wrote it.
@@ -285,18 +289,46 @@ def _ongoing_section(doc: dict[str, Any], heading: bool = True) -> list[str]:
     return out
 
 
-def _footer(doc: dict[str, Any]) -> list[str]:
+def summary_section(summary: dict[str, Any] | None, headline: str = "") -> list[str]:
+    if not summary or not summary.get("text"):
+        return []
+    if summary.get("source") == "gemini":
+        note = (f"Written by Gemini ({esc(summary.get('model') or '?')}) from findings.json only; checked: "
+                f"every URL, number and finding id in it appears in findings.json.")
+    else:
+        note = f"Template summary (no AI). Gemini not used: {esc(summary.get('reason') or 'unknown reason')}."
+    out = ["## Summary", "", f"_{note}_", ""]
+    lines = [x.strip() for x in summary["text"].splitlines()]
+    if summary.get("source") != "gemini" and lines and lines[0].rstrip(".") == headline.rstrip("."):
+        lines = lines[1:]  # the template starts with the headline, already printed above
+    for line in lines:
+        if not line:
+            continue
+        if out[-1] and not line.startswith("- "):
+            out.append("")  # end a list before a plain line
+        out.append(esc(line))
+        if not line.startswith("- "):  # each plain line is its own paragraph; list items stay together
+            out.append("")
+    if out[-1]:
+        out.append("")
+    return out
+
+
+def _footer(doc: dict[str, Any], summary: dict[str, Any] | None = None) -> list[str]:
+    ai = ("The Summary section is written by Gemini and validated against findings.json; "
+          "everything else is deterministic." if summary and summary.get("source") == "gemini"
+          else "No AI-written text in this report.")
     return ["---", "",
             f"Built from data/snapshots/{doc['date']}/findings.json (generated {doc['generated_at']}, "
             f"tool {doc['tool_version']}) and the snapshot of the same day. Every number above is copied "
-            f"from those files; next steps are written by the severity rules. No AI-written text in this report.",
+            f"from those files; next steps are written by the severity rules. {ai}",
             ""]
 
 
 # ---- the report --------------------------------------------------------------------------
 
 def build_report(doc: dict[str, Any], meta: dict[str, Any] | None = None,
-                 records: dict[str, Any] | None = None) -> str:
+                 records: dict[str, Any] | None = None, summary: dict[str, Any] | None = None) -> str:
     """Markdown report for one findings document."""
     records = records or {}
     site = doc["site"]
@@ -313,6 +345,7 @@ def build_report(doc: dict[str, Any], meta: dict[str, Any] | None = None,
     if run:
         out.append(f"- {esc(run)}")
     out.append("")
+    out.extend(summary_section(summary, doc["headline"]))
 
     if status == "stable":
         # Short form: a few lines, not a long list.
@@ -336,7 +369,7 @@ def build_report(doc: dict[str, Any], meta: dict[str, Any] | None = None,
             out.append(f"Known issues ({len(ongoing)}, unchanged):")
             out.append("")
             out.extend(_ongoing_section(doc, heading=False))
-        out.extend(_footer(doc))
+        out.extend(_footer(doc, summary))
         return "\n".join(out)
 
     if status == "baseline":
@@ -355,7 +388,7 @@ def build_report(doc: dict[str, Any], meta: dict[str, Any] | None = None,
         for f in fs:
             out.extend(finding_block(f))
     out.extend(_ongoing_section(doc))
-    out.extend(_footer(doc))
+    out.extend(_footer(doc, summary))
     return "\n".join(out)
 
 

@@ -706,7 +706,7 @@ def build_findings(cfg: dict[str, Any], root: str | Path, day: str, records: dic
         raise SnapshotError(f"--compare-to must be a YYYY-MM-DD day before {day}, got {compare_to!r}")
     root = Path(root)
     if records is None:
-        records = {k: v for k, v in read_snapshot(root, day).items() if k not in ("meta", "findings")}
+        records = {k: v for k, v in read_snapshot(root, day).items() if k not in ("meta", "findings", "summary")}
     ctx = Ctx(cfg, root, day, compare_to)
     prev_day_any = latest_previous_day(root, day)
     prev_meta = {}
