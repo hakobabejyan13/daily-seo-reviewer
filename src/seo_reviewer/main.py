@@ -255,6 +255,10 @@ def run_daily(cfg: dict[str, Any], base_dir: Path, day: str | None = None,
               psi_kwargs: dict[str, Any] | None = None, compare_to: str | None = None,
               llm_kwargs: dict[str, Any] | None = None) -> dict[str, Any]:
     """Collect + diff + summarize + report."""
+    llm_kwargs = dict(llm_kwargs or {})
+    if "deadline" not in llm_kwargs:  # the Gemini call must fit in what is left of runtime.budget_seconds
+        clock = llm_kwargs.setdefault("clock", time.monotonic)
+        llm_kwargs["deadline"] = clock() + cfg["runtime"]["budget_seconds"]
     result = run_collect_only(cfg, base_dir, day=day, client=client, now=now, psi_kwargs=psi_kwargs)
     diff = run_diff(cfg, base_dir, result["day"], records=result["records"], compare_to=compare_to)
     result["findings"] = diff["findings"]

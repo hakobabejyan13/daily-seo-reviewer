@@ -14,9 +14,12 @@ Provider: Google Gemini REST API via requests (no SDK).
   with thinkingBudget = llm.thinking_budget (Gemini 2.5) or thinkingLevel =
   llm.thinking_level (Gemini 3+; they cannot turn thinking off), whichever is
   set (neither = no thinkingConfig, model default),
-  timeout llm.timeout_seconds. One retry on HTTP 5xx (the model is often
-  "overloaded" for a moment); no retry on 429 (free-tier quota, waiting does
-  not help inside a 5-minute run) or on a timeout.
+  timeout llm.timeout_seconds. One retry on HTTP 5xx or a timeout (the
+  model is often "overloaded" for a moment); no retry on 429 (free-tier
+  quota, waiting does not help inside a 5-minute run). With a deadline (the
+  end of runtime.budget_seconds, from main.py) a call only starts when at
+  least MIN_CALL_SECONDS are left, and its read timeout is cut to the time
+  that is left.
   The key is never logged or stored, and every error text is scrubbed of it.
 
 Validator (every Gemini answer, before it is used):
@@ -59,6 +62,7 @@ SCHEMA_VERSION = 1
 RETRY_STATUSES = frozenset({500, 502, 503, 504})
 RETRY_PAUSE_SECONDS = 2.0
 CONNECT_TIMEOUT = 10.0
+MIN_CALL_SECONDS = 15.0
 MAX_ERROR_LEN = 300
 MAX_SUMMARY_CHARS = 1500
 TEMPLATE_TOP = 3
@@ -278,7 +282,8 @@ def parse_answer(data: Any) -> tuple[str, dict[str, Any]]:
 
 
 def call_gemini(cfg: dict[str, Any], doc: dict[str, Any], key: str, session: Any = None,
-                sleep: Callable[[float], None] = time.sleep) -> tuple[str, dict[str, Any]]:
+                sleep: Callable[[float], None] = time.sleep, deadline: float | None = None,
+                clock: Callable[[], float] = time.monotonic) -> tuple[str, dict[str, Any]]:
     llm = cfg["llm"]
     url = llm["endpoint"].replace("{model}", llm["model"])
     session = session or requests.Session()
@@ -286,12 +291,24 @@ def call_gemini(cfg: dict[str, Any], doc: dict[str, Any], key: str, session: Any
                "User-Agent": cfg["crawler"]["user_agent"]}
     body = build_request(cfg, doc)
     attempts = 2
+    last = ""
     for attempt in range(attempts):
+        read_timeout = float(llm["timeout_seconds"])
+        if deadline is not None:
+            left = deadline - clock()
+            if left < MIN_CALL_SECONDS:
+                why = f"{last}; " if last else ""
+                raise SummaryError(f"{why}no time left in runtime.budget_seconds for "
+                                   f"{'another' if attempt else 'a'} Gemini call")
+            read_timeout = min(read_timeout, left)
         try:
             resp = session.request("POST", url, headers=headers, json=body,
-                                   timeout=(CONNECT_TIMEOUT, llm["timeout_seconds"]))
+                                   timeout=(CONNECT_TIMEOUT, read_timeout))
         except requests.Timeout:
-            raise SummaryError(f"Gemini timed out after {llm['timeout_seconds']} s") from None
+            last = f"Gemini timed out after {read_timeout:g} s"
+            if attempt + 1 < attempts:
+                continue
+            raise SummaryError(last + (" (tried twice)" if attempt else "")) from None
         except requests.RequestException as e:
             raise SummaryError(_scrub(f"Gemini request failed: {type(e).__name__}: {e}", key)) from None
         if resp.status_code == 200:
@@ -302,6 +319,7 @@ def call_gemini(cfg: dict[str, Any], doc: dict[str, Any], key: str, session: Any
             return parse_answer(data)
         msg = _scrub(_api_message(resp), key)
         if resp.status_code in RETRY_STATUSES and attempt + 1 < attempts:
+            last = f"Gemini HTTP {resp.status_code}: {msg}"
             sleep(RETRY_PAUSE_SECONDS)
             continue
         if resp.status_code == 429:
@@ -314,7 +332,8 @@ def call_gemini(cfg: dict[str, Any], doc: dict[str, Any], key: str, session: Any
 
 def summarize(cfg: dict[str, Any], doc: dict[str, Any], env: Mapping[str, str] | None = None,
               session: Any = None, sleep: Callable[[float], None] = time.sleep,
-              now: datetime | None = None) -> dict[str, Any]:
+              now: datetime | None = None, deadline: float | None = None,
+              clock: Callable[[], float] = time.monotonic) -> dict[str, Any]:
     """Summary record for one findings document. Never raises for API problems."""
     env = os.environ if env is None else env
     llm = cfg["llm"]
@@ -341,7 +360,8 @@ def summarize(cfg: dict[str, Any], doc: dict[str, Any], env: Mapping[str, str] |
         reason = f"{llm['api_key_env']} is not set"
     else:
         try:
-            text, usage = call_gemini(cfg, doc, key, session=session, sleep=sleep)
+            text, usage = call_gemini(cfg, doc, key, session=session, sleep=sleep,
+                                      deadline=deadline, clock=clock)
             record["usage"] = usage
             problems = validate_summary(text, prompt_data(doc), ids)
             if problems:

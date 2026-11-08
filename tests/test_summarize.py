@@ -112,7 +112,7 @@ def test_prompt_is_compact(cfg, issues_doc):
     ((error(429, "Resource has been exhausted (e.g. check quota)."),), "Gemini rate limit (HTTP 429): Resource has been exhausted"),
     ((error(503, "The model is overloaded."), error(500, "Internal error")), "Gemini HTTP 500: Internal error"),
     ((error(400, "Unknown name thinkingConfig"),), "Gemini HTTP 400: Unknown name thinkingConfig"),
-    ((requests.Timeout("read timed out"),), "Gemini timed out after 30 s"),
+    ((requests.Timeout("read timed out"), requests.Timeout("again")), "Gemini timed out after 30 s (tried twice)"),
     ((requests.ConnectionError("boom"),), "Gemini request failed: ConnectionError: boom"),
     ((answer(""),), "Gemini returned an empty answer"),
     ((answer("cut off", finish="MAX_TOKENS"),), "cut off at llm.max_output_tokens"),
@@ -276,3 +276,33 @@ def test_template_does_not_repeat_the_count():
            "findings": [{"id": "F001", "severity": "info", "rule": "title_length", "check": "title length",
                          "message": "title length out of range: 39 URLs (baseline)", "count": 39, "evidence": "now: 15"}]}
     assert "- F001 info: title length out of range: 39 URLs (baseline) [now: 15]" in S.template_summary(doc)
+
+
+def test_timeout_is_retried_once_then_ok(cfg, issues_doc):
+    rec, session = run(cfg, issues_doc, requests.Timeout("slow"), answer(good_text(issues_doc)))
+    assert rec["source"] == "gemini" and len(session.requests) == 2
+
+
+def test_deadline_limits_the_call(cfg, issues_doc):
+    from conftest import FakeClock
+    clock = FakeClock()
+    clock.now = 100.0
+    # 10 s left: below MIN_CALL_SECONDS, no request at all
+    session = GeminiSession(answer("never"))
+    rec = S.summarize(cfg, issues_doc, env={"GEMINI_API_KEY": KEY}, session=session, sleep=clock.sleep,
+                      deadline=110.0, clock=clock)
+    assert rec["source"] == "template" and not session.requests
+    assert rec["reason"] == "no time left in runtime.budget_seconds for a Gemini call"
+    # 20 s left: the read timeout is cut to 20 s; after a timeout there is no time for a retry
+    session = GeminiSession(requests.Timeout("slow"))
+
+    def slow(method, url, **kw):
+        session.requests.append(kw)
+        clock.now += kw["timeout"][1]
+        raise requests.Timeout("slow")
+    session.request = slow
+    rec = S.summarize(cfg, issues_doc, env={"GEMINI_API_KEY": KEY}, session=session, sleep=clock.sleep,
+                      deadline=120.0, clock=clock)
+    assert session.requests[0]["timeout"][1] == 20.0 and len(session.requests) == 1
+    assert rec["reason"] == ("Gemini timed out after 20 s; no time left in runtime.budget_seconds "
+                             "for another Gemini call")
