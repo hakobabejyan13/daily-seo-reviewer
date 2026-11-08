@@ -17,7 +17,7 @@ Provider: Google Gemini REST API via requests (no SDK).
   timeout llm.timeout_seconds. One retry on HTTP 5xx or a timeout (the
   model is often "overloaded" for a moment); no retry on 429 (free-tier
   quota, waiting does not help inside a 5-minute run). With a deadline (the
-  end of runtime.budget_seconds, from main.py) a call only starts when at
+  end of llm.budget_seconds, from main.py) a call only starts when at
   least MIN_CALL_SECONDS are left, and its read timeout is cut to the time
   that is left.
   The key is never logged or stored, and every error text is scrubbed of it.
@@ -298,7 +298,7 @@ def call_gemini(cfg: dict[str, Any], doc: dict[str, Any], key: str, session: Any
             left = deadline - clock()
             if left < MIN_CALL_SECONDS:
                 why = f"{last}; " if last else ""
-                raise SummaryError(f"{why}no time left in runtime.budget_seconds for "
+                raise SummaryError(f"{why}no time left in llm.budget_seconds for "
                                    f"{'another' if attempt else 'a'} Gemini call")
             read_timeout = min(read_timeout, left)
         try:

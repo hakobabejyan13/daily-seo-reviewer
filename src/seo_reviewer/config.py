@@ -92,6 +92,7 @@ SCHEMA: dict[str, Any] = {
         "thinking_budget": OPT_INT_NONNEG,   # Gemini 2.5 models
         "thinking_level": OPT_STR,           # Gemini 3+ models
         "timeout_seconds": NUM_POS,
+        "budget_seconds": NUM_POS,           # own window for the summary, after the diff
     },
     "delivery": {
         "telegram": {

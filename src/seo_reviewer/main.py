@@ -34,6 +34,9 @@ A Telegram problem (disabled, missing TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID,
 HTTP error, 429, timeout) never loses the report and does not change the exit
 code: it is recorded in delivery.json and printed as "DELIVERY FAILED: ...".
 
+The Gemini summary is not part of runtime.budget_seconds: it has its own
+window, llm.budget_seconds, counted from the moment the diff is done.
+
 runtime.budget_seconds is counted from the start of the run; the crawl and
 the link check stop starting new requests once it is used up (record status
 partial). PSI calls go to Google's API, not the target site, so they run in a
@@ -278,13 +281,13 @@ def run_daily(cfg: dict[str, Any], base_dir: Path, day: str | None = None,
               tg_kwargs: dict[str, Any] | None = None) -> dict[str, Any]:
     """Collect + diff + summarize + report + deliver."""
     llm_kwargs = dict(llm_kwargs or {})
-    if "deadline" not in llm_kwargs:  # the Gemini call must fit in what is left of runtime.budget_seconds
-        clock = llm_kwargs.setdefault("clock", time.monotonic)
-        llm_kwargs["deadline"] = clock() + cfg["runtime"]["budget_seconds"]
     result = run_collect_only(cfg, base_dir, day=day, client=client, now=now, psi_kwargs=psi_kwargs)
     diff = run_diff(cfg, base_dir, result["day"], records=result["records"], compare_to=compare_to)
     result["findings"] = diff["findings"]
     result["findings_path"] = diff["path"]
+    if "deadline" not in llm_kwargs:  # the summary has its own window (llm.budget_seconds), counted from here
+        clock = llm_kwargs.setdefault("clock", time.monotonic)
+        llm_kwargs["deadline"] = clock() + cfg["llm"]["budget_seconds"]
     summ = run_summarize(cfg, base_dir, result["day"], diff["findings"], llm_kwargs)
     result["summary"] = summ["summary"]
     result["summary_path"] = summ["path"]

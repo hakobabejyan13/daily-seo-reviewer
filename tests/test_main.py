@@ -236,3 +236,25 @@ def test_run_daily_summary_gemini_and_template(cfg, tmp_path, capsys):
     assert main_mod.main(["--report-only", "--config", str(cfg_path), "--date", "2026-11-08"]) == 0
     assert "summary: template" in capsys.readouterr().out
     assert "summary.json is from an older findings.json" in (tmp_path / "reports" / "2026-11-08.md").read_text(encoding="utf-8")
+
+
+def test_summary_window_starts_after_collection(cfg, tmp_path, monkeypatch):
+    """The Gemini call has its own llm.budget_seconds, so a slow collection does not eat it."""
+    from test_summarize import KEY, GeminiSession, answer
+    cfg["crawler"]["max_pages"] = 2
+    clock = FakeClock()
+    real_collect = main_mod.run_collect_only
+
+    def slow_collect(*a, **kw):
+        out = real_collect(*a, **kw)
+        clock.now += cfg["runtime"]["budget_seconds"] + 100  # collection used more than the whole run budget
+        return out
+    monkeypatch.setattr(main_mod, "run_collect_only", slow_collect)
+    session = GeminiSession(answer("All stable today."))
+    result = main_mod.run_daily(cfg, tmp_path, day="2026-11-07", client=client_for(cfg, link_routes()),
+                                psi_kwargs=psi_kwargs(),
+                                llm_kwargs={"env": {"GEMINI_API_KEY": KEY}, "session": session,
+                                            "sleep": clock.sleep, "clock": clock})
+    assert len(session.requests) == 1
+    assert session.requests[0]["timeout"][1] == float(cfg["llm"]["timeout_seconds"])
+    assert result["summary"]["source"] != "template" or "no time left" not in result["summary"]["reason"]

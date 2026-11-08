@@ -73,7 +73,8 @@ llm:
   max_output_tokens: 2048    # includes thought tokens on Gemini 3+; the summary itself is ~150 tokens
   thinking_budget: null      # Gemini 2.5 only: 0 = thinking off. null for Gemini 3+.
   thinking_level: "low"      # Gemini 3+ only: low/medium/high (thinking cannot be off; thought tokens count against max_output_tokens)
-  timeout_seconds: 60        # per call; cut to what is left of runtime.budget_seconds. 30 s timed out on 2026-11-08
+  timeout_seconds: 90        # per call; cut to what is left of llm.budget_seconds. 60 s timed out on 2026-11-08
+  budget_seconds: 180        # own window for the summary (both attempts), counted after the diff, not part of runtime.budget_seconds
 
 delivery:
   telegram:

@@ -292,7 +292,7 @@ def test_deadline_limits_the_call(cfg, issues_doc):
     rec = S.summarize(cfg, issues_doc, env={"GEMINI_API_KEY": KEY}, session=session, sleep=clock.sleep,
                       deadline=110.0, clock=clock)
     assert rec["source"] == "template" and not session.requests
-    assert rec["reason"] == "no time left in runtime.budget_seconds for a Gemini call"
+    assert rec["reason"] == "no time left in llm.budget_seconds for a Gemini call"
     # 20 s left: the read timeout is cut to 20 s; after a timeout there is no time for a retry
     session = GeminiSession(requests.Timeout("slow"))
 
@@ -304,5 +304,5 @@ def test_deadline_limits_the_call(cfg, issues_doc):
     rec = S.summarize(cfg, issues_doc, env={"GEMINI_API_KEY": KEY}, session=session, sleep=clock.sleep,
                       deadline=120.0, clock=clock)
     assert session.requests[0]["timeout"][1] == 20.0 and len(session.requests) == 1
-    assert rec["reason"] == ("Gemini timed out after 20 s; no time left in runtime.budget_seconds "
+    assert rec["reason"] == ("Gemini timed out after 20 s; no time left in llm.budget_seconds "
                              "for another Gemini call")
