@@ -1,0 +1,135 @@
+name: daily-review
+
+# The daily SEO review (PLAN.md section 7).
+# Every day at 05:00 UTC = 09:00 Asia/Yerevan (GitHub may start it 5-30 min late),
+# plus a manual "Run workflow" button.
+# Steps: unit tests -> collect + diff + summary + report + Telegram -> commit
+# data/ and reports/ back to the repo as "report: YYYY-MM-DD" (github-actions bot).
+# Secrets: PSI_API_KEY, GEMINI_API_KEY, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID.
+# If the tests, the review or the push fail, a short alert goes to Telegram.
+# A failed Telegram message (delivery.json) is only a warning: the run stays
+# green and the report is still committed.
+on:
+  schedule:
+    - cron: "0 5 * * *"
+  workflow_dispatch:
+    inputs:
+      compare_to:
+        description: "Optional: compare with this earlier day (YYYY-MM-DD) instead of the last ok day"
+        type: string
+        default: ""
+      send_telegram:
+        description: "Send the Telegram message (off = message only printed)"
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+
+concurrency:
+  group: daily-review
+  cancel-in-progress: false
+
+jobs:
+  daily-review:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Unit tests (no network)
+        id: tests
+        run: python -m pytest -q
+
+      - name: Daily review (collect + diff + summary + report + Telegram)
+        id: review
+        env:
+          PYTHONPATH: src
+          PSI_API_KEY: ${{ secrets.PSI_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          COMPARE_TO: ${{ inputs.compare_to }}
+          NO_DELIVER: ${{ (github.event_name == 'schedule' || inputs.send_telegram) && ' ' || '--no-deliver' }}
+        run: |
+          DAY=$(date -u +%F)
+          echo "DAY=$DAY" >> "$GITHUB_ENV"
+          ARGS="--config config.yaml --date $DAY $NO_DELIVER"
+          if [ -n "$COMPARE_TO" ]; then ARGS="$ARGS --compare-to $COMPARE_TO"; fi
+          python -m seo_reviewer.main $ARGS
+
+      - name: Show the report (also added to the run summary)
+        if: always() && steps.review.outcome != 'skipped'
+        run: |
+          f="reports/$DAY.md"
+          if [ -f "$f" ]; then cat "$f"; cat "$f" >> "$GITHUB_STEP_SUMMARY"; fi
+
+      - name: Warn if the Telegram message was not sent
+        if: steps.review.outcome == 'success'
+        run: |
+          python - <<'EOF'
+          import json, os, pathlib
+          p = pathlib.Path("data/snapshots") / os.environ["DAY"] / "delivery.json"
+          if not p.is_file():
+              print(f"::warning::Telegram: {p} is missing")
+          else:
+              d = json.loads(p.read_text(encoding="utf-8"))
+              if d.get("status") != "sent":
+                  print(f"::warning::Telegram message {d.get('status')}: {d.get('reason')}")
+              else:
+                  print(f"Telegram: sent, message id {d.get('message_id')}")
+          EOF
+
+      - name: Commit data/ and reports/ back to the repo
+        id: commit
+        if: steps.review.outcome == 'success'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898733+github-actions[bot]@users.noreply.github.com"
+          git add data/ reports/
+          if git diff --cached --quiet; then
+            echo "Nothing to commit."
+            exit 0
+          fi
+          git commit -m "report: $DAY"
+          for i in 1 2 3; do
+            if git push origin "HEAD:${GITHUB_REF_NAME}"; then exit 0; fi
+            echo "Push failed (attempt $i), rebasing on the remote branch and retrying"
+            sleep $((i * 5))
+            git pull --rebase origin "${GITHUB_REF_NAME}"
+          done
+          echo "::error::Push failed after 3 attempts"
+          exit 1
+
+      - name: Telegram alert when the run fails
+        if: failure()
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          TESTS: ${{ steps.tests.outcome }}
+          REVIEW: ${{ steps.review.outcome }}
+          COMMIT: ${{ steps.commit.outcome }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          STEP="setup"
+          if [ "$TESTS" = "failure" ]; then STEP="unit tests"; fi
+          if [ "$REVIEW" = "failure" ]; then STEP="review run"; fi
+          if [ "$COMMIT" = "failure" ]; then STEP="commit-back"; fi
+          if [ -z "$TELEGRAM_BOT_TOKEN" ] || [ -z "$TELEGRAM_CHAT_ID" ]; then
+            echo "::warning::Telegram secrets not set, no failure alert sent"
+            exit 0
+          fi
+          code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 20 \
+            "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+            --data-urlencode "chat_id=${TELEGRAM_CHAT_ID}" \
+            --data-urlencode "text=Daily SEO review failed at: ${STEP}. Run: ${RUN_URL}" \
+            --data-urlencode "link_preview_options={\"is_disabled\":true}") || code="error"
+          echo "Failure alert: Telegram HTTP $code"
