@@ -1,0 +1,97 @@
+{
+ "captchaResult": "CAPTCHA_NOT_NEEDED",
+ "kind": "pagespeedonline#result",
+ "id": "https://example.test/",
+ "loadingExperience": {
+  "id": "https://example.test/",
+  "metrics": {
+   "LARGEST_CONTENTFUL_PAINT_MS": {
+    "percentile": 2710,
+    "distributions": [],
+    "category": "AVERAGE"
+   },
+   "INTERACTION_TO_NEXT_PAINT": {
+    "percentile": 180,
+    "distributions": [],
+    "category": "FAST"
+   },
+   "CUMULATIVE_LAYOUT_SHIFT_SCORE": {
+    "percentile": 5,
+    "distributions": [],
+    "category": "FAST"
+   },
+   "FIRST_CONTENTFUL_PAINT_MS": {
+    "percentile": 1700,
+    "category": "FAST"
+   }
+  },
+  "overall_category": "AVERAGE",
+  "initial_url": "https://example.test/"
+ },
+ "originLoadingExperience": {
+  "id": "https://example.test",
+  "metrics": {
+   "LARGEST_CONTENTFUL_PAINT_MS": {
+    "percentile": 2450,
+    "distributions": [],
+    "category": "FAST"
+   },
+   "INTERACTION_TO_NEXT_PAINT": {
+    "percentile": 160,
+    "distributions": [],
+    "category": "FAST"
+   },
+   "CUMULATIVE_LAYOUT_SHIFT_SCORE": {
+    "percentile": 3,
+    "distributions": [],
+    "category": "FAST"
+   },
+   "FIRST_CONTENTFUL_PAINT_MS": {
+    "percentile": 1700,
+    "category": "FAST"
+   }
+  },
+  "overall_category": "FAST",
+  "initial_url": "https://example.test/"
+ },
+ "lighthouseResult": {
+  "requestedUrl": "https://example.test/",
+  "finalUrl": "https://example.test/",
+  "finalDisplayedUrl": "https://example.test/",
+  "lighthouseVersion": "12.8.2",
+  "fetchTime": "2026-11-08T05:01:12.345Z",
+  "runWarnings": [
+   "The page loaded too slowly to finish within the time limit."
+  ],
+  "categories": {
+   "performance": {
+    "id": "performance",
+    "title": "Performance",
+    "score": 0.62
+   }
+  },
+  "audits": {
+   "largest-contentful-paint": {
+    "id": "largest-contentful-paint",
+    "numericValue": 4123.7,
+    "numericUnit": "millisecond",
+    "displayValue": "x"
+   },
+   "cumulative-layout-shift": {
+    "id": "cumulative-layout-shift",
+    "numericValue": 0.0412,
+    "numericUnit": "unitless"
+   },
+   "total-blocking-time": {
+    "id": "total-blocking-time",
+    "numericValue": 356.2,
+    "numericUnit": "millisecond"
+   },
+   "first-contentful-paint": {
+    "id": "first-contentful-paint",
+    "numericValue": 1200.5
+   }
+  }
+ },
+ "analysisUTCTimestamp": "2026-11-08T05:01:12.345Z"
+}

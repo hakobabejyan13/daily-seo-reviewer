@@ -2,6 +2,8 @@ name: crawl-check
 
 # Manual run only: verifies the site in config.yaml can be crawled politely
 # from GitHub Actions (robots.txt allows us, no bot challenge, sitemap OK).
+# The dry-run step also calls PageSpeed Insights; it needs the repository
+# secret PSI_API_KEY (without it PSI is recorded as failed, the run goes on).
 on:
   workflow_dispatch:
 
@@ -43,4 +45,5 @@ jobs:
         if: always()
         env:
           PYTHONPATH: src
+          PSI_API_KEY: ${{ secrets.PSI_API_KEY }}
         run: python -m seo_reviewer.main --collect-only --config config.yaml

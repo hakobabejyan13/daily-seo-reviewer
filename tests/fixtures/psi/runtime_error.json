@@ -1,0 +1,46 @@
+{
+ "kind": "pagespeedonline#result",
+ "id": "https://example.test/",
+ "lighthouseResult": {
+  "requestedUrl": "https://example.test/",
+  "finalUrl": "https://example.test/",
+  "finalDisplayedUrl": "https://example.test/",
+  "lighthouseVersion": "12.8.2",
+  "fetchTime": "2026-11-08T05:01:12.345Z",
+  "runWarnings": [],
+  "categories": {
+   "performance": {
+    "id": "performance",
+    "title": "Performance",
+    "score": null
+   }
+  },
+  "audits": {
+   "largest-contentful-paint": {
+    "id": "largest-contentful-paint",
+    "numericValue": null,
+    "numericUnit": "millisecond",
+    "displayValue": "x"
+   },
+   "cumulative-layout-shift": {
+    "id": "cumulative-layout-shift",
+    "numericValue": null,
+    "numericUnit": "unitless"
+   },
+   "total-blocking-time": {
+    "id": "total-blocking-time",
+    "numericValue": null,
+    "numericUnit": "millisecond"
+   },
+   "first-contentful-paint": {
+    "id": "first-contentful-paint",
+    "numericValue": 1200.5
+   }
+  },
+  "runtimeError": {
+   "code": "NO_FCP",
+   "message": "The page did not paint any content."
+  }
+ },
+ "analysisUTCTimestamp": "2026-11-08T05:02:00Z"
+}

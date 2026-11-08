@@ -8,6 +8,7 @@ from seo_reviewer.http_client import PoliteClient
 
 from conftest import FakeClock, FakeSession, make_response
 from test_crawl import page_routes
+from test_psi import HOME as PSI_HOME, KEY as PSI_KEY, PsiSession, resp as psi_resp
 from test_sitemap import BASE, site_routes
 
 
@@ -24,16 +25,28 @@ def client_for(cfg, routes):
     return PoliteClient(cfg["crawler"], session=FakeSession(routes), clock=clock, sleep=clock.sleep)
 
 
+def psi_kwargs(routes=None, env=None):
+    clock = FakeClock()
+    routes = routes if routes is not None else {(PSI_HOME, "mobile"): psi_resp("mobile_ok"),
+                                                (PSI_HOME, "desktop"): psi_resp("desktop_origin_fallback")}
+    return {"session": PsiSession(routes, clock), "clock": clock, "sleep": clock.sleep,
+            "env": {"PSI_API_KEY": PSI_KEY} if env is None else env}
+
+
 def test_collect_only_writes_snapshot_and_applies_retention(cfg, tmp_path):
     root = snap.snapshot_root(cfg, tmp_path)
     (root / "2026-01-01").mkdir(parents=True)  # older than 90 days
     now = datetime(2026, 11, 8, 5, 3, tzinfo=timezone.utc)
     cfg["crawler"]["max_pages"] = 2
-    result = main_mod.run_collect_only(cfg, tmp_path, client=client_for(cfg, link_routes()), now=now)
+    result = main_mod.run_collect_only(cfg, tmp_path, client=client_for(cfg, link_routes()), now=now,
+                                       psi_kwargs=psi_kwargs())
     assert result["day"] == "2026-11-08"
     assert result["deleted"] == ["2026-01-01"]
     data = snap.read_snapshot(root, "2026-11-08")
-    assert set(data) == {"meta", "robots", "sitemap", "crawl", "links"}
+    assert set(data) == {"meta", "robots", "sitemap", "crawl", "links", "psi"}
+    assert data["meta"]["sources"]["psi"] == {"status": "ok", "error": None}
+    assert data["psi"]["counts"]["ok"] == 2
+    assert PSI_KEY not in (root / "2026-11-08" / "psi.json").read_text(encoding="utf-8")
     assert data["meta"]["sources"]["robots"]["status"] == "ok"
     assert data["meta"]["sources"]["sitemap"]["status"] == "ok"
     assert data["meta"]["sources"]["crawl"]["status"] == "ok"
@@ -51,11 +64,45 @@ def test_collect_only_writes_snapshot_and_applies_retention(cfg, tmp_path):
     assert ("links:   ok, 4 unique internal link(s): 2 from the crawl, 2 to check, 0 over the cap; "
             "2 checked (1 needed GET after HEAD), 1 broken (1 4xx, 0 5xx, 0 failed)") in text
     assert "ok | 404 | GET | 1 | https://example.test/blog/relative/" in text
+    assert "psi:     ok, 2 run(s) (1 URL(s) x mobile, desktop): 2 ok, 0 failed, 0 skipped; 2 API request(s)" in text
+    assert "ok | mobile | 62 | 4124 ms | 0.0412 | 356 ms | 0.0 s | https://example.test/" in text
+    assert ("field (CrUX, 28 days) URL: AVERAGE (LCP 2710 ms AVERAGE, INP 180 ms FAST, CLS 0.05 FAST); "
+            "origin: FAST (LCP 2450 ms FAST, INP 160 ms FAST, CLS 0.03 FAST)") in text
+    assert "field (CrUX, 28 days) URL: none; origin: FAST" in text
+    assert "requests made: 11 to the site, 2 to the PSI API" in text
+    assert PSI_KEY not in text
+
+
+def test_psi_failure_is_recorded_not_fatal(cfg, tmp_path):
+    cfg["crawler"]["max_pages"] = 2
+    result = main_mod.run_collect_only(cfg, tmp_path, day="2026-11-08", client=client_for(cfg, link_routes()),
+                                       psi_kwargs=psi_kwargs(env={}))
+    meta = snap.read_meta(snap.snapshot_root(cfg, tmp_path), "2026-11-08")
+    assert meta["sources"]["psi"]["status"] == "failed"
+    assert meta["sources"]["crawl"]["status"] == "ok"
+    text = main_mod.format_summary(result)
+    assert "PSI failed: no API key: environment variable PSI_API_KEY is not set" in text
+
+
+def test_psi_crash_does_not_lose_other_sources(cfg, tmp_path, monkeypatch):
+    cfg["crawler"]["max_pages"] = 2
+
+    def boom(*a, **kw):
+        raise RuntimeError("bug")
+
+    monkeypatch.setattr(main_mod, "collect_psi", boom)
+    result = main_mod.run_collect_only(cfg, tmp_path, day="2026-11-08", client=client_for(cfg, link_routes()),
+                                       psi_kwargs=psi_kwargs())
+    assert result["records"]["psi"]["status"] == "failed"
+    assert result["records"]["psi"]["error"] == "PSI collector crashed: RuntimeError: bug"
+    assert result["records"]["links"]["status"] == "ok"
+    assert "PSI failed: PSI collector crashed" in main_mod.format_summary(result)
 
 
 def test_collect_only_records_failed_sources(cfg, tmp_path):
     routes = site_routes(**{f"{BASE}/robots.txt": make_response(f"{BASE}/robots.txt", 503, "")})
-    result = main_mod.run_collect_only(cfg, tmp_path, day="2026-11-08", client=client_for(cfg, routes))
+    result = main_mod.run_collect_only(cfg, tmp_path, day="2026-11-08", client=client_for(cfg, routes),
+                                       psi_kwargs=psi_kwargs())
     meta = snap.read_meta(snap.snapshot_root(cfg, tmp_path), "2026-11-08")
     assert meta["sources"]["robots"]["status"] == "failed"
     assert meta["sources"]["sitemap"]["status"] == "failed"
@@ -74,6 +121,7 @@ def test_cli_argument_errors(tmp_path, capsys):
 
 
 def test_cli_end_to_end_with_fake_network(cfg, tmp_path, monkeypatch, capsys):
+    monkeypatch.delenv("PSI_API_KEY", raising=False)  # PSI records "no API key", no network
     cfg["crawler"]["max_pages"] = 2
     cfg_path = tmp_path / "config.yaml"
     cfg_path.write_text(yaml.safe_dump(cfg), encoding="utf-8")
@@ -86,4 +134,6 @@ def test_cli_end_to_end_with_fake_network(cfg, tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(PoliteClient, "__init__", fake_init)
     assert main_mod.main(["--collect-only", "--config", str(cfg_path), "--date", "2026-11-08"]) == 0
     assert (tmp_path / "data" / "snapshots" / "2026-11-08" / "meta.json").is_file()  # relative to config.yaml
-    assert "Snapshot 2026-11-08 written" in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert "Snapshot 2026-11-08 written" in out
+    assert "PSI failed: no API key" in out

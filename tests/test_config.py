@@ -95,3 +95,9 @@ def test_sitemap_patterns_must_be_valid_regex(cfg):
     cfg["crawler"]["sitemap_exclude"] = ["^/tag/", "(unclosed"]
     with pytest.raises(ConfigError, match=r"crawler.sitemap_exclude: invalid regular expression '\(unclosed'"):
         validate_config(cfg)
+
+
+def test_psi_timeout_must_fit_budget(cfg):
+    cfg["psi"]["timeout_seconds"] = 300
+    with pytest.raises(ConfigError, match="psi.timeout_seconds: must be smaller than runtime.budget_seconds"):
+        validate_config(cfg)

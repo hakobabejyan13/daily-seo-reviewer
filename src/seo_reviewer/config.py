@@ -178,6 +178,11 @@ def _cross_checks(cfg: dict[str, Any], errors: list[str]) -> None:
                 re.compile(pat)
             except re.error as e:
                 errors.append(f"crawler.{key}: invalid regular expression {pat!r}: {e}")
+    psi_timeout = cfg.get("psi", {}).get("timeout_seconds")
+    budget = cfg.get("runtime", {}).get("budget_seconds")
+    if _is_number(psi_timeout) and _is_number(budget) and psi_timeout >= budget:
+        errors.append("psi.timeout_seconds: must be smaller than runtime.budget_seconds, "
+                      "otherwise no PSI call can ever start")
     method = cfg.get("links", {}).get("method")
     if isinstance(method, str) and method.upper() not in ("HEAD", "GET"):
         errors.append(f"links.method: must be HEAD or GET, got {method!r}")

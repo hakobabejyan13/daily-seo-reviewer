@@ -1,0 +1,12 @@
+{
+ "error": {
+  "code": 400,
+  "message": "Lighthouse returned error: FAILED_DOCUMENT_REQUEST. Lighthouse was unable to reliably load the page you requested.",
+  "errors": [
+   {
+    "domain": "lighthouse",
+    "reason": "lighthouseUserError"
+   }
+  ]
+ }
+}
