@@ -100,6 +100,7 @@ SCHEMA: dict[str, Any] = {
             "chat_id_env": STR,
             "parse_mode": STR,
             "max_findings_in_message": INT_POS,
+            "timeout_seconds": INT_POS,
         },
         "report_dir": STR,
         "report_base_url": URL,
@@ -215,6 +216,11 @@ def _cross_checks(cfg: dict[str, Any], errors: list[str]) -> None:
         errors.append(f"llm.thinking_level: must be minimal, low, medium or high, got {llm['thinking_level']!r}")
     if isinstance(llm.get("endpoint"), str) and "{model}" not in llm["endpoint"]:
         errors.append("llm.endpoint: must contain {model}")
+    delivery = cfg.get("delivery") if isinstance(cfg.get("delivery"), dict) else {}
+    tg = delivery.get("telegram") if isinstance(delivery.get("telegram"), dict) else {}
+    if isinstance(tg.get("parse_mode"), str) and tg["parse_mode"] != "HTML":
+        errors.append(f"delivery.telegram.parse_mode: only 'HTML' is supported (the message is HTML-escaped), "
+                      f"got {tg['parse_mode']!r}")
     overrides = cfg.get("rules", {}).get("severity_overrides") if isinstance(cfg.get("rules"), dict) else None
     if isinstance(overrides, dict):
         from .rules import validate_overrides  # rules.py has no imports of its own

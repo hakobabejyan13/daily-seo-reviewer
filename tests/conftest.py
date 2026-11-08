@@ -77,3 +77,11 @@ def no_gemini_key(monkeypatch):
     """Tests never call Gemini by accident: the summary uses the template
     unless a test passes its own env and fake session."""
     monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+
+
+@pytest.fixture(autouse=True)
+def no_telegram_secrets(monkeypatch):
+    """Tests never message a real chat: delivery is skipped unless a test
+    passes its own env and fake session."""
+    monkeypatch.delenv("TELEGRAM_BOT_TOKEN", raising=False)
+    monkeypatch.delenv("TELEGRAM_CHAT_ID", raising=False)

@@ -6,8 +6,16 @@ name: crawl-check
 # secret PSI_API_KEY (without it PSI is recorded as failed, the run goes on)
 # and uses GEMINI_API_KEY for the review summary (without it the report uses
 # the template summary and says why).
+# Telegram: by default the message is only built and printed (--no-deliver);
+# tick "send_telegram" on Run workflow to send it for real (needs the
+# repository secrets TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID).
 on:
   workflow_dispatch:
+    inputs:
+      send_telegram:
+        description: "Send the Telegram message (off = dry run, message only printed)"
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -43,13 +51,16 @@ jobs:
         if: always()
         run: cat crawl-check.json || true
 
-      - name: Collect + diff + summary + report dry run (nothing is committed)
+      - name: Collect + diff + summary + report + Telegram dry run (nothing is committed)
         if: always()
         env:
           PYTHONPATH: src
           PSI_API_KEY: ${{ secrets.PSI_API_KEY }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-        run: python -m seo_reviewer.main --config config.yaml
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          NO_DELIVER: ${{ inputs.send_telegram && ' ' || '--no-deliver' }}
+        run: python -m seo_reviewer.main --config config.yaml $NO_DELIVER
 
       - name: Show the report (also added to the run summary)
         if: always()

@@ -1,18 +1,20 @@
 """Run the daily SEO review.
 
 Usage (from the repo root):
-    PYTHONPATH=src python -m seo_reviewer.main [--collect-only | --diff-only | --report-only]
-        [--config config.yaml] [--date YYYY-MM-DD] [--compare-to YYYY-MM-DD]
+    PYTHONPATH=src python -m seo_reviewer.main [--collect-only | --diff-only | --report-only | --deliver-only]
+        [--no-deliver] [--config config.yaml] [--date YYYY-MM-DD] [--compare-to YYYY-MM-DD]
 
 Modes:
-  (default)       collect + diff + summarize + report: collect robots.txt,
+  (default)       collect + diff + summarize + report + deliver: collect robots.txt,
                   the sitemap, the on-page crawl, the link check and
                   PageSpeed Insights, write today's snapshot (UTC date) to
                   storage.snapshot_dir, apply retention, compare with earlier
                   snapshots and write findings.json into the same day folder,
                   write summary.json (Gemini summary of findings.json, or the
                   template fallback), then write the markdown report
-                  delivery.report_dir/YYYY-MM-DD.md.
+                  delivery.report_dir/YYYY-MM-DD.md, then send the short
+                  Telegram message (deliver/telegram.py) and record the
+                  result in the day's delivery.json.
   --collect-only  collect and write the snapshot only (no findings, no report).
   --diff-only     no network: rebuild findings.json for an existing snapshot
                   (--date, default today). The summary and report are not
@@ -20,9 +22,17 @@ Modes:
                   then ignored by the report: it uses the template).
   --report-only   no network: rebuild the report from an existing
                   findings.json and summary.json (--date, default today).
+  --deliver-only  no network except Telegram: build and send the message for an
+                  existing day (--date, default today) from its findings.json,
+                  summary.json and snapshot.
+  --no-deliver    with the default run or --deliver-only: build the message and
+                  write delivery.json (status skipped) but do not send it.
   --compare-to D  compare every source with day D instead of the last day
                   that source was ok (PSI confirmations count from D).
-Task 9 adds delivery (Telegram).
+
+A Telegram problem (disabled, missing TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID,
+HTTP error, 429, timeout) never loses the report and does not change the exit
+code: it is recorded in delivery.json and printed as "DELIVERY FAILED: ...".
 
 runtime.budget_seconds is counted from the start of the run; the crawl and
 the link check stop starting new requests once it is used up (record status
@@ -52,6 +62,7 @@ from .collectors.links import collect_links, is_broken
 from .collectors.psi import collect_psi, failed_record
 from .collectors.robots import collect_robots
 from .collectors.sitemap import collect_sitemap
+from .deliver.telegram import deliver, format_delivery, write_delivery
 from .config import ConfigError, load_config
 from .diff import build_findings, format_findings, write_findings
 from .http_client import PoliteClient
@@ -250,11 +261,22 @@ def run_report(cfg: dict[str, Any], base_dir: Path, day: str) -> dict[str, Any]:
             "findings": inputs["findings"], "summary": summary}
 
 
+def run_deliver(cfg: dict[str, Any], base_dir: Path, day: str, send: bool = True,
+                tg_kwargs: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Build (and unless send is False, send) the Telegram message for `day`; write delivery.json."""
+    root = snapshot_root(cfg, base_dir)
+    inputs = load_inputs(root, day)
+    summary = load_summary(root, day, inputs["findings"])
+    rec = deliver(cfg, inputs["findings"], summary, inputs["records"], send=send, **(tg_kwargs or {}))
+    return {"day": day, "path": write_delivery(root, day, rec), "delivery": rec}
+
+
 def run_daily(cfg: dict[str, Any], base_dir: Path, day: str | None = None,
               client: PoliteClient | None = None, now: datetime | None = None,
               psi_kwargs: dict[str, Any] | None = None, compare_to: str | None = None,
-              llm_kwargs: dict[str, Any] | None = None) -> dict[str, Any]:
-    """Collect + diff + summarize + report."""
+              llm_kwargs: dict[str, Any] | None = None, send: bool = True,
+              tg_kwargs: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Collect + diff + summarize + report + deliver."""
     llm_kwargs = dict(llm_kwargs or {})
     if "deadline" not in llm_kwargs:  # the Gemini call must fit in what is left of runtime.budget_seconds
         clock = llm_kwargs.setdefault("clock", time.monotonic)
@@ -269,6 +291,13 @@ def run_daily(cfg: dict[str, Any], base_dir: Path, day: str | None = None,
     report = run_report(cfg, base_dir, result["day"])
     result["report_path"] = report["path"]
     result["report"] = report["text"]
+    try:
+        dl = run_deliver(cfg, base_dir, result["day"], send=send, tg_kwargs=tg_kwargs)
+    except Exception as e:  # the report is already written; never lose the run because of delivery
+        dl = {"path": None, "delivery": {"status": "failed", "reason": f"delivery crashed: {type(e).__name__}: {e}",
+                                          "text": "", "finding_ids": [], "findings_total": 0, "chars": 0}}
+    result["delivery"] = dl["delivery"]
+    result["delivery_path"] = dl["path"]
     return result
 
 
@@ -323,6 +352,8 @@ def format_summary(result: dict[str, Any]) -> str:
         lines.extend(format_summary_record(result["summary"], result.get("summary_path")))
     if "report_path" in result:
         lines.append(f"Report written to {result['report_path']}")
+    if "delivery" in result:
+        lines.extend(format_delivery(result["delivery"], result.get("delivery_path")))
     return "\n".join(lines)
 
 
@@ -336,6 +367,10 @@ def main(argv: list[str] | None = None) -> int:
                       help="no network: rebuild findings.json for an existing snapshot (--date, default today)")
     mode.add_argument("--report-only", action="store_true",
                       help="no network: rebuild the markdown report from an existing findings.json (--date, default today)")
+    mode.add_argument("--deliver-only", action="store_true",
+                      help="send the Telegram message for an existing day (--date, default today); no other network")
+    ap.add_argument("--no-deliver", action="store_true",
+                      help="build the Telegram message and write delivery.json, but do not send it (dry runs)")
     ap.add_argument("--date", help="snapshot date YYYY-MM-DD (default: today, UTC)")
     ap.add_argument("--compare-to", help="compare with this earlier day YYYY-MM-DD instead of the last ok day per source")
     args = ap.parse_args(argv)
@@ -344,8 +379,13 @@ def main(argv: list[str] | None = None) -> int:
         if value and parse_day(value) is None:
             print(f"--{name.replace('_', '-')} must be YYYY-MM-DD, got {value!r}", file=sys.stderr)
             return 2
-    if args.compare_to and (args.collect_only or args.report_only):
-        print(f"--compare-to has no effect with --{'collect' if args.collect_only else 'report'}-only", file=sys.stderr)
+    if args.compare_to and (args.collect_only or args.report_only or args.deliver_only):
+        which = "collect" if args.collect_only else ("report" if args.report_only else "deliver")
+        print(f"--compare-to has no effect with --{which}-only", file=sys.stderr)
+        return 2
+    if args.no_deliver and (args.collect_only or args.diff_only or args.report_only):
+        which = "collect" if args.collect_only else ("diff" if args.diff_only else "report")
+        print(f"--no-deliver has no effect with --{which}-only (nothing is sent there)", file=sys.stderr)
         return 2
     try:
         cfg = load_config(args.config)
@@ -359,13 +399,17 @@ def main(argv: list[str] | None = None) -> int:
             print(f"Report for {rep['day']} written to {rep['path']} ({rep['findings']['headline']}; "
                   f"summary: {rep['summary']['source']})")
             return 0
+        if args.deliver_only:
+            dl = run_deliver(cfg, base_dir, args.date or utc_today(), send=not args.no_deliver)
+            print("\n".join(format_delivery(dl["delivery"], dl["path"])))
+            return 0
         if args.diff_only:
             print(format_diff_summary(run_diff(cfg, base_dir, args.date or utc_today(), compare_to=args.compare_to)))
             return 0
         if args.collect_only:
             result = run_collect_only(cfg, base_dir, day=args.date)
         else:
-            result = run_daily(cfg, base_dir, day=args.date, compare_to=args.compare_to)
+            result = run_daily(cfg, base_dir, day=args.date, compare_to=args.compare_to, send=not args.no_deliver)
     except (SnapshotError, OSError) as e:
         print(f"SNAPSHOT ERROR: {e}", file=sys.stderr)
         return 1

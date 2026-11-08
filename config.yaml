@@ -80,8 +80,9 @@ delivery:
     enabled: true
     bot_token_env: "TELEGRAM_BOT_TOKEN"
     chat_id_env: "TELEGRAM_CHAT_ID"
-    parse_mode: "HTML"
+    parse_mode: "HTML"         # only HTML is supported; all text is HTML-escaped
     max_findings_in_message: 5
+    timeout_seconds: 20        # per sendMessage call; 5xx/timeouts retried once, 429 only if retry_after <= 30 s
   report_dir: "reports"
   report_base_url: "https://github.com/hakobabejyan13/daily-seo-reviewer/blob/main/reports"
 

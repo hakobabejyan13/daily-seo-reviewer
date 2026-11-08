@@ -305,7 +305,7 @@ def call_gemini(cfg: dict[str, Any], doc: dict[str, Any], key: str, session: Any
             resp = session.request("POST", url, headers=headers, json=body,
                                    timeout=(CONNECT_TIMEOUT, read_timeout))
         except requests.Timeout:
-            last = f"Gemini timed out after {read_timeout:g} s"
+            last = f"Gemini timed out after {round(read_timeout)} s"
             if attempt + 1 < attempts:
                 continue
             raise SummaryError(last + (" (tried twice)" if attempt else "")) from None
