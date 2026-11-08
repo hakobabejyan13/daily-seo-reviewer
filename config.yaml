@@ -19,6 +19,13 @@ crawler:
   respect_robots_txt: true
   max_pages: 50              # homepage + newest N sitemap URLs by lastmod
   extra_urls: []             # always-crawled pages, besides the homepage
+  # Regexes on the URL path, used when picking the newest sitemap URLs
+  # (not applied to the homepage or extra_urls). Empty = no filter.
+  sitemap_include: []
+  sitemap_exclude:           # tag/author pages and translations get a new lastmod with every post
+    - "^/tag/"
+    - "^/author/"
+    - "^/[a-z]{2}-[a-z]{2}/"
 
 sitemap:
   max_child_sitemaps: 20

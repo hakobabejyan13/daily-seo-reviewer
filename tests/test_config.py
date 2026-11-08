@@ -89,3 +89,9 @@ def test_fallback_site_needs_only_config_change(cfg):
     cfg["site"].update(name="Smashing Magazine", base_url="https://www.smashingmagazine.com",
                        sitemap_url="https://www.smashingmagazine.com/sitemap.xml")
     assert validate_config(copy.deepcopy(cfg))["site"]["name"] == "Smashing Magazine"
+
+
+def test_sitemap_patterns_must_be_valid_regex(cfg):
+    cfg["crawler"]["sitemap_exclude"] = ["^/tag/", "(unclosed"]
+    with pytest.raises(ConfigError, match=r"crawler.sitemap_exclude: invalid regular expression '\(unclosed'"):
+        validate_config(cfg)

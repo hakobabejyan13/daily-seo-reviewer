@@ -5,7 +5,10 @@ Pages crawled (in this order, duplicates removed):
   2. crawler.extra_urls (absolute, or relative to base_url)
   3. the newest crawler.max_pages URLs of today's sitemap record, by
      <lastmod> (same host as base_url only; URLs without a usable lastmod
-     come after the dated ones, in sitemap order)
+     come after the dated ones, in sitemap order). crawler.sitemap_include /
+     crawler.sitemap_exclude are regular expressions matched (re.search)
+     against the URL path: with includes, a URL must match at least one;
+     a URL matching any exclude is dropped. Empty lists = no filter.
 If the sitemap source failed, only 1 and 2 are crawled and the record says so.
 
 Every request goes through the PoliteClient (robots.txt, rate limit,
@@ -117,17 +120,25 @@ def select_pages(cfg: dict[str, Any], sitemap_record: dict[str, Any] | None) -> 
     for sm in sitemap_record.get("sitemaps", []):
         for loc, lastmod in (sm.get("urls") or {}).items():
             candidates.setdefault(loc, lastmod)
+    includes = [re.compile(p) for p in cfg["crawler"].get("sitemap_include") or []]
+    excludes = [re.compile(p) for p in cfg["crawler"].get("sitemap_exclude") or []]
     dated, undated = [], []
-    off_host = 0
+    off_host = filtered = 0
     for order, (loc, lastmod) in enumerate(candidates.items()):
         url = normalize_link(loc, base + "/")
         if url is None or _host(url) != host:
             off_host += 1
             continue
+        path = urlsplit(url).path
+        if (includes and not any(p.search(path) for p in includes)) or any(p.search(path) for p in excludes):
+            filtered += 1
+            continue
         dt = parse_lastmod(lastmod)
         (dated if dt else undated).append((-(dt.timestamp()) if dt else 0.0, order, url, lastmod))
     if off_host:
         notes.append(f"{off_host} sitemap URL(s) ignored: not on {host}")
+    if filtered:
+        notes.append(f"{filtered} sitemap URL(s) left out by crawler.sitemap_include/sitemap_exclude")
     picked = 0
     for _, _, url, lastmod in sorted(dated) + undated:
         if picked >= max_pages:

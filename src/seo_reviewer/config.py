@@ -6,6 +6,7 @@ lists them all, so a broken config is fixed in one pass.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
@@ -43,6 +44,8 @@ SCHEMA: dict[str, Any] = {
         "respect_robots_txt": BOOL,
         "max_pages": INT_POS,
         "extra_urls": LIST_STR,
+        "sitemap_include": LIST_STR,
+        "sitemap_exclude": LIST_STR,
     },
     "sitemap": {
         "max_child_sitemaps": INT_POS,
@@ -162,6 +165,19 @@ def _cross_checks(cfg: dict[str, Any], errors: list[str]) -> None:
         bad = [s for s in strategies if s not in ("mobile", "desktop")]
         if bad:
             errors.append(f"psi.strategies: only 'mobile' and 'desktop' are allowed, got {bad!r}")
+    crawler = cfg.get("crawler")
+    crawler = crawler if isinstance(crawler, dict) else {}
+    for key in ("sitemap_include", "sitemap_exclude"):
+        pats = crawler.get(key)
+        if not isinstance(pats, list):
+            continue
+        for pat in pats:
+            if not isinstance(pat, str):
+                continue  # already reported by the schema check
+            try:
+                re.compile(pat)
+            except re.error as e:
+                errors.append(f"crawler.{key}: invalid regular expression {pat!r}: {e}")
     method = cfg.get("links", {}).get("method")
     if isinstance(method, str) and method.upper() not in ("HEAD", "GET"):
         errors.append(f"links.method: must be HEAD or GET, got {method!r}")

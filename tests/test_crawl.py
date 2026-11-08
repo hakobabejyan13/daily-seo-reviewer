@@ -255,3 +255,23 @@ def test_budget_stops_early(cfg):
     assert pages[f"{BASE}/post-e/"]["status"] == "skipped"
     assert ("GET", f"{BASE}/post-e/") not in session.calls
     assert rec["status"] == "partial" and "budget_seconds reached: 1 page(s)" in rec["error"]
+
+
+def test_select_include_exclude_patterns(cfg):
+    cfg["crawler"]["max_pages"] = 10
+    cfg["crawler"]["sitemap_include"] = []
+    cfg["crawler"]["sitemap_exclude"] = ["^/tag/", "^/author/", "^/[a-z]{2}-[a-z]{2}/"]
+    rec = sitemap_record({
+        f"{BASE}/tag/ai/": "2026-11-08",
+        f"{BASE}/author/x/": "2026-11-08",
+        f"{BASE}/it-it/post/": "2026-11-08",
+        f"{BASE}/it-it/": "2026-11-08",
+        f"{BASE}/post-a": "2026-11-07",
+        f"{BASE}/post-b/": "2026-11-06",
+    })
+    pages, notes = select_pages(cfg, rec)
+    assert [p["url"] for p in pages] == [f"{BASE}/", f"{BASE}/post-a", f"{BASE}/post-b/"]
+    assert "4 sitemap URL(s) left out by crawler.sitemap_include/sitemap_exclude" in notes
+    cfg["crawler"]["sitemap_include"] = ["^/post-b/$"]
+    pages, _ = select_pages(cfg, rec)
+    assert [p["url"] for p in pages] == [f"{BASE}/", f"{BASE}/post-b/"]
