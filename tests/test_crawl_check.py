@@ -2,7 +2,7 @@ import gzip
 
 import pytest
 
-from seo_reviewer.crawl_check import detect_challenge, parse_sitemap, run_crawl_check
+from seo_reviewer.crawl_check import detect_challenge, format_markdown, parse_sitemap, run_crawl_check
 from seo_reviewer.http_client import PoliteClient
 
 from conftest import FakeClock, FakeSession, make_response
@@ -115,3 +115,9 @@ def test_parse_sitemap_ignores_external_entities():
     evil = b'<?xml version="1.0"?><!DOCTYPE x [<!ENTITY e SYSTEM "file:///etc/passwd">]><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"><url><loc>&e;</loc></url></urlset>'
     result = parse_sitemap(evil)
     assert all("root:" not in loc for loc in result["locs"])
+
+
+def test_markdown_summary_escapes_tag_names(cfg):
+    md = format_markdown(run(cfg, good_routes()))
+    assert "&lt;sitemapindex&gt; with 2 entries" in md
+    assert "<sitemapindex>" not in md

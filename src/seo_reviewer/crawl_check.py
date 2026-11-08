@@ -251,7 +251,7 @@ def format_markdown(report: dict[str, Any]) -> str:
              f"User-Agent: `{report['user_agent']}`", "",
              "| Check | Result | Details |", "|---|---|---|"]
     for c in report["checks"]:
-        summary = c["summary"].replace("|", "\\|")
+        summary = c["summary"].replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("|", "\\|")
         lines.append(f"| {c['name']} | {'PASS' if c['passed'] else 'FAIL'} | {summary} |")
     lines += ["", "**Overall: " + ("PASS" if report["passed"] else "FAIL") + "**", ""]
     return "\n".join(lines)
