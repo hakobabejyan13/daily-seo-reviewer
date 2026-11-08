@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <sitemap><loc>https://example.test/sitemap-posts.xml</loc><lastmod>2026-10-29T13:16:41.361Z</lastmod></sitemap>
+  <sitemap><loc>https://example.test/sitemap-posts-2.xml</loc><lastmod>2026-11-06T16:09:41.685Z</lastmod></sitemap>
+  <sitemap><loc>https://example.test/sitemap-tags.xml</loc></sitemap>
+</sitemapindex>

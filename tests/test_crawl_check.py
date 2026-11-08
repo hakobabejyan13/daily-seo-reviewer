@@ -102,7 +102,8 @@ def test_sitemap_404_fails(cfg):
 
 def test_parse_sitemap_urlset_and_gzip():
     plain = parse_sitemap(URLSET.encode())
-    assert plain == {"kind": "urlset", "entries": 2, "locs": ["https://example.test/a/", "https://example.test/b/"], "with_lastmod": 1}
+    assert plain == {"kind": "urlset", "entries": 2, "locs": ["https://example.test/a/", "https://example.test/b/"], "with_lastmod": 1,
+                     "items": [("https://example.test/a/", "2026-11-06"), ("https://example.test/b/", None)]}
     assert parse_sitemap(gzip.compress(URLSET.encode()))["entries"] == 2
 
 

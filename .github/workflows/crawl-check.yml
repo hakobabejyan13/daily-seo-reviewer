@@ -38,3 +38,9 @@ jobs:
       - name: Show full JSON result
         if: always()
         run: cat crawl-check.json || true
+
+      - name: Collect-only dry run (snapshot is not committed)
+        if: always()
+        env:
+          PYTHONPATH: src
+        run: python -m seo_reviewer.main --collect-only --config config.yaml

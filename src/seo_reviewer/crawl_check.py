@@ -18,7 +18,6 @@ appended there as well.
 from __future__ import annotations
 
 import argparse
-import gzip
 import json
 import os
 import sys
@@ -27,9 +26,9 @@ from datetime import datetime, timezone
 from typing import Any
 
 from bs4 import BeautifulSoup
-from lxml import etree
 
 from .collectors.robots import collect_robots
+from .collectors.sitemap import parse_sitemap  # noqa: F401  (re-exported for callers of crawl_check)
 from .config import ConfigError, load_config
 from .http_client import FetchError, PoliteClient, RobotsDisallowed
 
@@ -52,7 +51,6 @@ CHALLENGE_BODY_MARKERS = (
 CHALLENGE_HEADERS = {"cf-mitigated": "challenge"}
 BLOCK_STATUSES = {401, 403, 429, 503}
 MIN_HTML_BYTES = 2000
-SITEMAP_NS = "http://www.sitemaps.org/schemas/sitemap/0.9"
 
 
 @dataclass
@@ -77,33 +75,6 @@ def detect_challenge(status: int, headers: dict[str, str], body: str) -> list[st
         if marker in low:
             reasons.append(f"body contains {marker!r}")
     return reasons
-
-
-def parse_sitemap(content: bytes) -> dict[str, Any]:
-    """Parse sitemap XML (optionally gzipped). Raises ValueError if not a sitemap."""
-    if content[:2] == b"\x1f\x8b":
-        content = gzip.decompress(content)
-    parser = etree.XMLParser(resolve_entities=False, no_network=True, huge_tree=False)
-    try:
-        root = etree.fromstring(content, parser=parser)
-    except etree.XMLSyntaxError as e:
-        raise ValueError(f"not valid XML: {e}") from None
-    kind = etree.QName(root).localname
-    if kind not in ("sitemapindex", "urlset"):
-        raise ValueError(f"root element is <{kind}>, expected <sitemapindex> or <urlset>")
-    child_tag = "sitemap" if kind == "sitemapindex" else "url"
-    entries = [el for el in root if isinstance(el.tag, str) and etree.QName(el).localname == child_tag]
-    locs: list[str] = []
-    with_lastmod = 0
-    for el in entries:
-        loc = el.find(f"{{{SITEMAP_NS}}}loc")
-        if loc is None:
-            loc = el.find("loc")
-        if loc is not None and loc.text and loc.text.strip():
-            locs.append(loc.text.strip())
-        if el.find(f"{{{SITEMAP_NS}}}lastmod") is not None or el.find("lastmod") is not None:
-            with_lastmod += 1
-    return {"kind": kind, "entries": len(entries), "locs": locs, "with_lastmod": with_lastmod}
 
 
 # ---- the three checks ---------------------------------------------------
