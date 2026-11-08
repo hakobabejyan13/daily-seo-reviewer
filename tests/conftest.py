@@ -28,6 +28,7 @@ def make_response(url: str, status: int = 200, body: str | bytes = "", headers: 
     r.status_code = status
     r.url = url
     r._content = body.encode("utf-8") if isinstance(body, str) else body
+    r._content_consumed = True  # like a fully read response (close() is then safe)
     r.headers.update(headers or {})
     r.encoding = "utf-8"
     return r

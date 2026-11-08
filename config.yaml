@@ -33,7 +33,7 @@ sitemap:
 
 links:
   enabled: true
-  max_links: 300
+  max_links: 150             # ~1 req/s: 150 links ~2.5 min; crawl ~1 min; leaves room for PSI in the 5-min budget
   check_external: false
   method: "HEAD"             # GET fallback when HEAD is not allowed
 

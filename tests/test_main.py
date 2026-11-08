@@ -11,6 +11,14 @@ from test_crawl import page_routes
 from test_sitemap import BASE, site_routes
 
 
+def link_routes():
+    """page_routes plus the two links found on the crawled pages that were not crawled."""
+    return page_routes(**{
+        f"{BASE}/tag/one/?page=2": make_response(f"{BASE}/tag/one/?page=2", 200, ""),
+        f"{BASE}/blog/relative/": make_response(f"{BASE}/blog/relative/", 404, ""),
+    })
+
+
 def client_for(cfg, routes):
     clock = FakeClock()
     return PoliteClient(cfg["crawler"], session=FakeSession(routes), clock=clock, sleep=clock.sleep)
@@ -21,15 +29,18 @@ def test_collect_only_writes_snapshot_and_applies_retention(cfg, tmp_path):
     (root / "2026-01-01").mkdir(parents=True)  # older than 90 days
     now = datetime(2026, 11, 8, 5, 3, tzinfo=timezone.utc)
     cfg["crawler"]["max_pages"] = 2
-    result = main_mod.run_collect_only(cfg, tmp_path, client=client_for(cfg, page_routes()), now=now)
+    result = main_mod.run_collect_only(cfg, tmp_path, client=client_for(cfg, link_routes()), now=now)
     assert result["day"] == "2026-11-08"
     assert result["deleted"] == ["2026-01-01"]
     data = snap.read_snapshot(root, "2026-11-08")
-    assert set(data) == {"meta", "robots", "sitemap", "crawl"}
+    assert set(data) == {"meta", "robots", "sitemap", "crawl", "links"}
     assert data["meta"]["sources"]["robots"]["status"] == "ok"
     assert data["meta"]["sources"]["sitemap"]["status"] == "ok"
     assert data["meta"]["sources"]["crawl"]["status"] == "ok"
-    assert data["meta"]["requests_made"] == 8  # robots + index + 3 children + 3 pages
+    assert data["meta"]["sources"]["links"]["status"] == "ok"
+    # robots + index + 3 children + 3 pages + links: tag HEAD, relative HEAD 404 + GET
+    assert data["meta"]["requests_made"] == 11
+    assert data["links"]["counts"]["broken"] == 1
     assert [p["url"] for p in data["crawl"]["pages"]] == [f"{BASE}/", f"{BASE}/post-d/", f"{BASE}/post-e/"]
     assert data["robots"]["allowed"] == {f"{BASE}/": True, f"{BASE}/sitemap.xml": True}
     assert data["sitemap"]["url_count"] == 7
@@ -37,6 +48,9 @@ def test_collect_only_writes_snapshot_and_applies_retention(cfg, tmp_path):
     assert "sitemap: ok, 7 URLs from 4 of 4 sitemap file(s)" in text
     assert "crawl:   ok, 3 page(s) selected: 3 fetched (3 HTTP 200, 0 redirected, 1 noindex)" in text
     assert "ok | 200 | 12 | 60 | 1 | self | no | 3 | https://example.test/" in text
+    assert ("links:   ok, 4 unique internal link(s): 2 from the crawl, 2 to check, 0 over the cap; "
+            "2 checked (1 needed GET after HEAD), 1 broken (1 4xx, 0 5xx, 0 failed)") in text
+    assert "ok | 404 | GET | 1 | https://example.test/blog/relative/" in text
 
 
 def test_collect_only_records_failed_sources(cfg, tmp_path):
@@ -47,6 +61,8 @@ def test_collect_only_records_failed_sources(cfg, tmp_path):
     assert meta["sources"]["sitemap"]["status"] == "failed"
     assert "robots.txt could not be fetched" in meta["sources"]["sitemap"]["error"]
     assert meta["sources"]["crawl"]["status"] == "failed"
+    assert meta["sources"]["links"]["status"] == "failed"
+    assert "crawl source failed" in meta["sources"]["links"]["error"]
     assert "sitemap: failed" in main_mod.format_summary(result)
 
 
@@ -65,7 +81,7 @@ def test_cli_end_to_end_with_fake_network(cfg, tmp_path, monkeypatch, capsys):
 
     def fake_init(self, crawler_cfg, **kw):
         clock = FakeClock()
-        real_init(self, crawler_cfg, session=FakeSession(page_routes()), clock=clock, sleep=clock.sleep)
+        real_init(self, crawler_cfg, session=FakeSession(link_routes()), clock=clock, sleep=clock.sleep)
 
     monkeypatch.setattr(PoliteClient, "__init__", fake_init)
     assert main_mod.main(["--collect-only", "--config", str(cfg_path), "--date", "2026-11-08"]) == 0

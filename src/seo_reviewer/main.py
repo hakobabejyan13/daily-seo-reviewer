@@ -3,13 +3,14 @@
 Usage (from the repo root):
     PYTHONPATH=src python -m seo_reviewer.main --collect-only [--config config.yaml] [--date YYYY-MM-DD]
 
-Only --collect-only exists so far: it collects robots.txt, the sitemap and
-the on-page crawl, writes today's snapshot (UTC date) to
-storage.snapshot_dir and applies retention. Later tasks add links, PSI, diff,
+Only --collect-only exists so far: it collects robots.txt, the sitemap,
+the on-page crawl and the link check, writes today's snapshot (UTC date) to
+storage.snapshot_dir and applies retention. Later tasks add PSI, diff,
 report and delivery.
 
-runtime.budget_seconds is counted from the start of the run; the crawl
-stops starting new requests once it is used up (record status partial).
+runtime.budget_seconds is counted from the start of the run; the crawl and
+the link check stop starting new requests once it is used up (record status
+partial).
 
 A failed source does not crash the run: it is recorded with status "failed"
 and its error in the snapshot. Exit code: 0 = snapshot written,
@@ -25,6 +26,7 @@ from pathlib import Path
 from typing import Any
 
 from .collectors.crawl import collect_crawl
+from .collectors.links import collect_links, is_broken
 from .collectors.robots import collect_robots
 from .collectors.sitemap import collect_sitemap
 from .config import ConfigError, load_config
@@ -41,7 +43,37 @@ def collect(cfg: dict[str, Any], client: PoliteClient) -> dict[str, dict[str, An
         "sitemap": collect_sitemap(client, cfg),
     }
     records["crawl"] = collect_crawl(client, cfg, records["sitemap"], deadline=deadline)
+    records["links"] = collect_links(client, cfg, records["crawl"], deadline=deadline)
     return records
+
+
+MAX_LINK_ROWS = 50
+
+
+def _links_lines(lr: dict[str, Any]) -> list[str]:
+    c = lr["counts"]
+    if lr["status"] == "disabled":
+        return ["  links:   disabled (links.enabled is false)"]
+    lines = [f"  links:   {lr['status']}, {lr['unique_links']} unique internal link(s): "
+             f"{lr['from_crawl']} from the crawl, {lr['to_check']} to check, {lr['left_out_by_cap']} over the cap; "
+             f"{c['checked']} checked ({c['get_fallback']} needed GET after HEAD), {c['broken']} broken "
+             f"({c['http_4xx']} 4xx, {c['http_5xx']} 5xx, {c['failed']} failed), {c['redirected']} redirected, "
+             f"{c['disallowed']} disallowed, {c['skipped']} skipped"]
+    for note in lr["notes"]:
+        lines.append(f"    note: {note}")
+    if lr.get("error"):
+        lines.append(f"    error: {lr['error']}")
+    rows = [lk for lk in lr["links"] if is_broken(lk) or lk["redirect_chain"] or lk["status"] == "disallowed"]
+    if rows:
+        lines.append("    broken, redirected and disallowed links (status | http | method | linked from | url -> final):")
+        for lk in rows[:MAX_LINK_ROWS]:
+            final = f" -> {lk['final_url']}" if lk["final_url"] and lk["final_url"] != lk["url"] else ""
+            lines.append(f"    {lk['status']} | {lk['http_status'] or '-'} | {lk['method'] or '-'} | "
+                         f"{lk['linked_from_count']} | {lk['url']}{final}"
+                         + (f"  ({lk['error']})" if lk.get("error") else ""))
+        if len(rows) > MAX_LINK_ROWS:
+            lines.append(f"    ... {len(rows) - MAX_LINK_ROWS} more in links.json")
+    return lines
 
 
 def _crawl_lines(cr: dict[str, Any]) -> list[str]:
@@ -104,6 +136,8 @@ def format_summary(result: dict[str, Any]) -> str:
         lines.append(f"    note: {sm['error']}")
     if "crawl" in result["records"]:
         lines.extend(_crawl_lines(result["records"]["crawl"]))
+    if "links" in result["records"]:
+        lines.extend(_links_lines(result["records"]["links"]))
     lines.append(f"  requests made: {result['requests_made']}")
     if result["deleted"]:
         lines.append(f"  retention: deleted {len(result['deleted'])} old snapshot(s): {', '.join(result['deleted'])}")
@@ -114,7 +148,7 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="Daily SEO reviewer.")
     ap.add_argument("--config", default="config.yaml")
     ap.add_argument("--collect-only", action="store_true",
-                    help="collect robots.txt, sitemap and on-page crawl and write today's snapshot (the only mode so far)")
+                    help="collect robots.txt, sitemap, on-page crawl and link check and write today's snapshot (the only mode so far)")
     ap.add_argument("--date", help="snapshot date YYYY-MM-DD (default: today, UTC)")
     args = ap.parse_args(argv)
     if not args.collect_only:
