@@ -70,6 +70,10 @@ class PoliteClient:
         self.session = session or requests.Session()
         self.session.headers.update({"User-Agent": self.user_agent})
 
+    def now(self) -> float:
+        """Current time on the client's (injectable) monotonic clock."""
+        return self._clock()
+
     # ---- rate limiting -------------------------------------------------
     def _wait_for_slot(self) -> None:
         now = self._clock()
