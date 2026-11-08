@@ -22,7 +22,7 @@ crawler:
 
 sitemap:
   max_child_sitemaps: 20
-  max_urls: 5000
+  max_urls: 15000            # real site ~10,200 URLs (dry run 2026-11-08); headroom for growth
 
 links:
   enabled: true
