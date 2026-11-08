@@ -218,3 +218,10 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+crawl-check.json
+STATUS.md
+PLAN.md
+DECISIONS.md
+CLAUDE.md
+.env

@@ -1,0 +1,40 @@
+name: crawl-check
+
+# Manual run only: verifies the site in config.yaml can be crawled politely
+# from GitHub Actions (robots.txt allows us, no bot challenge, sitemap OK).
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: crawl-check
+  cancel-in-progress: false
+
+jobs:
+  crawl-check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Unit tests (no network)
+        run: python -m pytest -q
+
+      - name: Crawl check
+        env:
+          PYTHONPATH: src
+        run: python -m seo_reviewer.crawl_check --config config.yaml --json crawl-check.json
+
+      - name: Show full JSON result
+        if: always()
+        run: cat crawl-check.json || true

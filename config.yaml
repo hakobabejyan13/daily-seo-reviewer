@@ -1,0 +1,76 @@
+# Daily SEO Reviewer configuration.
+# Everything site-specific lives here; switching sites = editing this file only.
+# Secrets are NOT stored here: they come from env vars (GitHub Secrets / .env).
+
+site:
+  name: "Cloudflare Blog"
+  base_url: "https://blog.cloudflare.com"
+  sitemap_url: "https://blog.cloudflare.com/sitemap.xml"
+  # Fallback (switch only if task 1 crawl check fails; log it in DECISIONS.md):
+  #   name: "Smashing Magazine"
+  #   base_url: "https://www.smashingmagazine.com"
+  #   sitemap_url: "https://www.smashingmagazine.com/sitemap.xml"
+
+crawler:
+  user_agent: "daily-seo-reviewer/0.1 (+https://github.com/hakobabejyan13/daily-seo-reviewer)"
+  requests_per_second: 1
+  timeout_seconds: 20
+  max_retries: 1
+  respect_robots_txt: true
+  max_pages: 50              # homepage + newest N sitemap URLs by lastmod
+  extra_urls: []             # always-crawled pages, besides the homepage
+
+sitemap:
+  max_child_sitemaps: 20
+  max_urls: 5000
+
+links:
+  enabled: true
+  max_links: 300
+  check_external: false
+  method: "HEAD"             # GET fallback when HEAD is not allowed
+
+psi:
+  enabled: true
+  api_key_env: "PSI_API_KEY"
+  urls: []                   # empty = homepage only; add key URLs here
+  strategies: ["mobile", "desktop"]
+  timeout_seconds: 60
+  max_retries: 1
+  regression_confirmations: 2   # lab metrics only; CrUX compared directly
+
+thresholds:
+  title_length: {min: 30, max: 60}
+  meta_description_length: {min: 70, max: 160}
+  psi_performance_drop_points: 10
+  lab_tolerance:             # changes below these are treated as noise
+    lcp_ms: 300
+    cls: 0.02
+    tbt_ms: 100
+
+llm:
+  enabled: true
+  provider: "gemini"
+  model: "gemini-2.5-flash"  # pinned name, never a "latest" alias
+  api_key_env: "GEMINI_API_KEY"
+  endpoint: "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+  max_output_tokens: 800
+  thinking_budget: 0         # verify in task 8
+  timeout_seconds: 30
+
+delivery:
+  telegram:
+    enabled: true
+    bot_token_env: "TELEGRAM_BOT_TOKEN"
+    chat_id_env: "TELEGRAM_CHAT_ID"
+    parse_mode: "HTML"
+    max_findings_in_message: 5
+  report_dir: "reports"
+  report_base_url: "https://github.com/hakobabejyan13/daily-seo-reviewer/blob/main/reports"
+
+storage:
+  snapshot_dir: "data/snapshots"
+  retention_days: 90
+
+runtime:
+  budget_seconds: 300        # whole run must finish in <= 5 min
