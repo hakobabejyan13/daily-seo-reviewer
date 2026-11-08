@@ -20,6 +20,9 @@ def cfg() -> dict:
     data = copy.deepcopy(data)
     data["site"].update(name="Example", base_url="https://example.test",
                         sitemap_url="https://example.test/sitemap.xml")
+    # Fixed LLM settings, so tests do not depend on the model chosen in config.yaml.
+    data["llm"].update(model="gemini-2.5-flash", thinking_budget=0, thinking_level=None,
+                       max_output_tokens=800, timeout_seconds=30)
     return data
 
 

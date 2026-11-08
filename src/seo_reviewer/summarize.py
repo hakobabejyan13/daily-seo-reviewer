@@ -10,7 +10,10 @@ copy of findings.json (never raw HTML or snapshot data) and must:
 Provider: Google Gemini REST API via requests (no SDK).
   POST llm.endpoint with {model} = llm.model, header X-goog-api-key from the
   env var named in llm.api_key_env, generationConfig.maxOutputTokens =
-  llm.max_output_tokens, thinkingConfig.thinkingBudget = llm.thinking_budget,
+  llm.max_output_tokens (thought tokens count against it), thinkingConfig
+  with thinkingBudget = llm.thinking_budget (Gemini 2.5) or thinkingLevel =
+  llm.thinking_level (Gemini 3+; they cannot turn thinking off), whichever is
+  set (neither = no thinkingConfig, model default),
   timeout llm.timeout_seconds. One retry on HTTP 5xx (the model is often
   "overloaded" for a moment); no retry on 429 (free-tier quota, waiting does
   not help inside a 5-minute run) or on a timeout.
@@ -125,14 +128,12 @@ def build_prompt(doc: dict[str, Any]) -> str:
 
 def build_request(cfg: dict[str, Any], doc: dict[str, Any]) -> dict[str, Any]:
     llm = cfg["llm"]
-    return {
-        "contents": [{"role": "user", "parts": [{"text": build_prompt(doc)}]}],
-        "generationConfig": {
-            "maxOutputTokens": llm["max_output_tokens"],
-            "temperature": 0.2,
-            "thinkingConfig": {"thinkingBudget": llm["thinking_budget"]},
-        },
-    }
+    gen: dict[str, Any] = {"maxOutputTokens": llm["max_output_tokens"], "temperature": 0.2}
+    if llm.get("thinking_budget") is not None:
+        gen["thinkingConfig"] = {"thinkingBudget": llm["thinking_budget"]}
+    elif llm.get("thinking_level") is not None:
+        gen["thinkingConfig"] = {"thinkingLevel": llm["thinking_level"]}
+    return {"contents": [{"role": "user", "parts": [{"text": build_prompt(doc)}]}], "generationConfig": gen}
 
 
 # ---- validator ----------------------------------------------------------------------------
@@ -223,7 +224,7 @@ def template_summary(doc: dict[str, Any], top: int = TEMPLATE_TOP) -> str:
         lines.append(f"{label}:")
         for f in findings[:top]:
             msg = f.get("message") or (f"{f['check']}: {f['url']}" if f.get("url") else f["check"])
-            n = f" ({f['count']} URLs)" if (f.get("count") or 1) > 1 else ""
+            n = f" ({f['count']} URLs)" if (f.get("count") or 1) > 1 and f"{f['count']} URL" not in msg else ""
             ev = f" [{f['evidence']}]" if f.get("evidence") and f["evidence"] not in msg else ""
             lines.append(f"- {f['id']} {f['severity']}: {msg}{n}{ev}")
         if len(findings) > top:

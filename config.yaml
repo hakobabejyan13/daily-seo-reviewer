@@ -67,11 +67,12 @@ rules:
 llm:
   enabled: true
   provider: "gemini"
-  model: "gemini-2.5-flash"  # pinned name, never a "latest" alias
+  model: "gemini-3.8-flash"  # pinned name, never a "latest" alias. gemini-2.5-flash is closed to new API keys (HTTP 404, 2026-11-08)
   api_key_env: "GEMINI_API_KEY"
   endpoint: "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
-  max_output_tokens: 800
-  thinking_budget: 0         # 0 = thinking off (2.5 Flash); live run shows thought tokens in the log
+  max_output_tokens: 2048    # includes thought tokens on Gemini 3+; the summary itself is ~150 tokens
+  thinking_budget: null      # Gemini 2.5 only: 0 = thinking off. null for Gemini 3+.
+  thinking_level: "low"      # Gemini 3+ only: low/medium/high (thinking cannot be off; thought tokens count against max_output_tokens)
   timeout_seconds: 30
 
 delivery:

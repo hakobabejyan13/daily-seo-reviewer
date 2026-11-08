@@ -29,6 +29,8 @@ BOOL = "true/false"
 LIST = "list"
 LIST_STR = "list of strings"
 MAP = "mapping (may be empty)"
+OPT_INT_NONNEG = "integer >= 0 or null"
+OPT_STR = "non-empty string or null"
 
 # Every key the program reads. Nested dicts are sections.
 SCHEMA: dict[str, Any] = {
@@ -87,7 +89,8 @@ SCHEMA: dict[str, Any] = {
         "api_key_env": STR,
         "endpoint": URL,
         "max_output_tokens": INT_POS,
-        "thinking_budget": INT_NONNEG,
+        "thinking_budget": OPT_INT_NONNEG,   # Gemini 2.5 models
+        "thinking_level": OPT_STR,           # Gemini 3+ models
         "timeout_seconds": NUM_POS,
     },
     "delivery": {
@@ -135,6 +138,10 @@ def _check_value(kind: str, v: Any) -> bool:
         return isinstance(v, bool)
     if kind == LIST:
         return isinstance(v, list)
+    if kind == OPT_INT_NONNEG:
+        return v is None or (isinstance(v, int) and not isinstance(v, bool) and v >= 0)
+    if kind == OPT_STR:
+        return v is None or (isinstance(v, str) and v.strip() != "")
     if kind == MAP:
         return v is None or isinstance(v, dict)
     if kind == LIST_STR:
@@ -201,6 +208,11 @@ def _cross_checks(cfg: dict[str, Any], errors: list[str]) -> None:
         errors.append(f"llm.provider: only 'gemini' is supported, got {llm['provider']!r}")
     if isinstance(llm.get("model"), str) and "latest" in llm["model"].lower():
         errors.append(f"llm.model: use a pinned model name, not a 'latest' alias, got {llm['model']!r}")
+    if llm.get("thinking_budget") is not None and llm.get("thinking_level") is not None:
+        errors.append("llm.thinking_budget and llm.thinking_level: set only one "
+                      "(thinking_budget for Gemini 2.5, thinking_level for Gemini 3+), the other null")
+    if isinstance(llm.get("thinking_level"), str) and llm["thinking_level"] not in ("minimal", "low", "medium", "high"):
+        errors.append(f"llm.thinking_level: must be minimal, low, medium or high, got {llm['thinking_level']!r}")
     if isinstance(llm.get("endpoint"), str) and "{model}" not in llm["endpoint"]:
         errors.append("llm.endpoint: must contain {model}")
     overrides = cfg.get("rules", {}).get("severity_overrides") if isinstance(cfg.get("rules"), dict) else None

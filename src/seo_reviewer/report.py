@@ -296,7 +296,7 @@ def summary_section(summary: dict[str, Any] | None, headline: str = "") -> list[
         note = (f"Written by Gemini ({esc(summary.get('model') or '?')}) from findings.json only; checked: "
                 f"every URL, number and finding id in it appears in findings.json.")
     else:
-        note = f"Template summary (no AI). Gemini not used: {esc(summary.get('reason') or 'unknown reason')}."
+        note = f"Template summary (no AI). Gemini not used: {esc((summary.get('reason') or 'unknown reason').rstrip('.'))}."
     out = ["## Summary", "", f"_{note}_", ""]
     lines = [x.strip() for x in summary["text"].splitlines()]
     if summary.get("source") != "gemini" and lines and lines[0].rstrip(".") == headline.rstrip("."):

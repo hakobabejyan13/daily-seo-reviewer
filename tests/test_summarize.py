@@ -21,13 +21,14 @@ ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-f
 class GeminiSession:
     """Serves queued answers for the Gemini endpoint and records each request."""
 
-    def __init__(self, *answers):
+    def __init__(self, *answers, url=ENDPOINT):
+        self.url = url
         self.answers = list(answers)
         self.requests: list[dict] = []
 
     def request(self, method, url, **kw):
         self.requests.append({"method": method, "url": url, **kw})
-        assert url == ENDPOINT, url
+        assert url == self.url, url
         item = self.answers.pop(0)
         if isinstance(item, Exception):
             raise item
@@ -251,3 +252,27 @@ def test_summary_json_is_not_read_as_a_source(cfg, root, issues_doc):
     S.write_summary(root, "2026-11-02", rec)
     again = D.build_findings(cfg, root, "2026-11-02")
     assert [f["id"] for f in again["findings"]] == [f["id"] for f in issues_doc["findings"]]
+
+
+def test_thinking_level_for_gemini_3(cfg, issues_doc):
+    cfg["llm"].update(model="gemini-3.8-flash", thinking_budget=None, thinking_level="low")
+    session = GeminiSession(answer(good_text(issues_doc)), url=ENDPOINT.replace("gemini-2.5-flash", "gemini-3.8-flash"))
+    rec = S.summarize(cfg, issues_doc, env={"GEMINI_API_KEY": KEY}, session=session, sleep=lambda s: None)
+    assert rec["source"] == "gemini" and rec["model"] == "gemini-3.8-flash"
+    assert session.requests[0]["json"]["generationConfig"]["thinkingConfig"] == {"thinkingLevel": "low"}
+    cfg["llm"]["thinking_level"] = None
+    assert "thinkingConfig" not in S.build_request(cfg, issues_doc)["generationConfig"]
+
+
+def test_404_model_gone_falls_back(cfg, issues_doc):
+    rec, _ = run(cfg, issues_doc, error(404, "This model models/gemini-2.5-flash is no longer available to new users."))
+    assert rec["source"] == "template" and rec["reason"].startswith("Gemini HTTP 404: This model")
+    md = RP.build_report(issues_doc, None, {}, rec)
+    assert "available to new users._" in md and "users.._" not in md
+
+
+def test_template_does_not_repeat_the_count():
+    doc = {"headline": "h", "status": "baseline", "sources": {},
+           "findings": [{"id": "F001", "severity": "info", "rule": "title_length", "check": "title length",
+                         "message": "title length out of range: 39 URLs (baseline)", "count": 39, "evidence": "now: 15"}]}
+    assert "- F001 info: title length out of range: 39 URLs (baseline) [now: 15]" in S.template_summary(doc)

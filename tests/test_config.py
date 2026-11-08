@@ -121,3 +121,25 @@ def test_llm_cross_checks(tmp_path):
             assert msg in str(e)
         else:
             raise AssertionError(f"llm.{key}={value!r} accepted")
+
+
+def test_llm_thinking_settings():
+    import copy
+    import yaml as _y
+    from conftest import REPO_ROOT
+    from seo_reviewer.config import ConfigError, validate_config
+    base = _y.safe_load((REPO_ROOT / "config.yaml").read_text(encoding="utf-8"))
+    for budget, level, msg in ((0, "low", "set only one"), (None, "off", "must be minimal, low, medium or high"),
+                               (-1, None, "thinking_budget")):
+        cfg = copy.deepcopy(base)
+        cfg["llm"].update(thinking_budget=budget, thinking_level=level)
+        try:
+            validate_config(cfg)
+        except ConfigError as e:
+            assert msg in str(e)
+        else:
+            raise AssertionError((budget, level))
+    for budget, level in ((0, None), (None, "low"), (None, None)):
+        cfg = copy.deepcopy(base)
+        cfg["llm"].update(thinking_budget=budget, thinking_level=level)
+        validate_config(cfg)
