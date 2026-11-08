@@ -67,7 +67,7 @@ rules:
 llm:
   enabled: true
   provider: "gemini"
-  model: "gemini-3.8-flash"  # pinned name, never a "latest" alias. gemini-2.5-flash is closed to new API keys (HTTP 404, 2026-11-08)
+  model: "gemini-3.5-flash-lite"  # pinned name, never a "latest" alias. Newest stable Flash-Lite (Google models page, 2026-11-08); gemini-3.8-flash timed out at 90 s, gemini-2.5-flash is closed to new keys (404)
   api_key_env: "GEMINI_API_KEY"
   endpoint: "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
   max_output_tokens: 2048    # includes thought tokens on Gemini 3+; the summary itself is ~150 tokens
