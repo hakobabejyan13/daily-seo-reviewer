@@ -28,6 +28,7 @@ NUM_NONNEG = "number >= 0"
 BOOL = "true/false"
 LIST = "list"
 LIST_STR = "list of strings"
+MAP = "mapping (may be empty)"
 
 # Every key the program reads. Nested dicts are sections.
 SCHEMA: dict[str, Any] = {
@@ -70,7 +71,14 @@ SCHEMA: dict[str, Any] = {
         "title_length": {"min": INT_NONNEG, "max": INT_POS},
         "meta_description_length": {"min": INT_NONNEG, "max": INT_POS},
         "psi_performance_drop_points": NUM_NONNEG,
+        "sitemap_drop_percent": NUM_NONNEG,
         "lab_tolerance": {"lcp_ms": NUM_NONNEG, "cls": NUM_NONNEG, "tbt_ms": NUM_NONNEG},
+    },
+    "rules": {
+        "trailing_slash_equivalent": BOOL,
+        "group_min": INT_POS,
+        "max_urls_per_finding": INT_POS,
+        "severity_overrides": MAP,
     },
     "llm": {
         "enabled": BOOL,
@@ -127,6 +135,8 @@ def _check_value(kind: str, v: Any) -> bool:
         return isinstance(v, bool)
     if kind == LIST:
         return isinstance(v, list)
+    if kind == MAP:
+        return v is None or isinstance(v, dict)
     if kind == LIST_STR:
         return isinstance(v, list) and all(isinstance(x, str) and x.strip() for x in v)
     raise AssertionError(f"unknown schema type {kind!r}")
@@ -186,6 +196,10 @@ def _cross_checks(cfg: dict[str, Any], errors: list[str]) -> None:
     method = cfg.get("links", {}).get("method")
     if isinstance(method, str) and method.upper() not in ("HEAD", "GET"):
         errors.append(f"links.method: must be HEAD or GET, got {method!r}")
+    overrides = cfg.get("rules", {}).get("severity_overrides") if isinstance(cfg.get("rules"), dict) else None
+    if isinstance(overrides, dict):
+        from .rules import validate_overrides  # rules.py has no imports of its own
+        errors.extend(validate_overrides(overrides))
 
 
 def validate_config(cfg: Any) -> dict[str, Any]:
@@ -198,6 +212,7 @@ def validate_config(cfg: Any) -> dict[str, Any]:
         raise ConfigError("Invalid config:\n  - " + "\n  - ".join(errors))
     # Normalise: no trailing slash on base_url, so URL joins are predictable.
     cfg["site"]["base_url"] = cfg["site"]["base_url"].rstrip("/")
+    cfg["rules"]["severity_overrides"] = cfg["rules"]["severity_overrides"] or {}
     return cfg
 
 

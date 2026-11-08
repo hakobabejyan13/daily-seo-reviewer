@@ -137,3 +137,42 @@ def test_cli_end_to_end_with_fake_network(cfg, tmp_path, monkeypatch, capsys):
     out = capsys.readouterr().out
     assert "Snapshot 2026-11-08 written" in out
     assert "PSI failed: no API key" in out
+
+
+def test_run_daily_writes_findings_from_real_collector_records(cfg, tmp_path):
+    cfg["crawler"]["max_pages"] = 2
+    root = snap.snapshot_root(cfg, tmp_path)
+    first = main_mod.run_daily(cfg, tmp_path, day="2026-11-07", client=client_for(cfg, link_routes()),
+                               psi_kwargs=psi_kwargs())
+    assert first["findings"]["status"] == "baseline"
+    assert (root / "2026-11-07" / "findings.json").is_file()
+    assert any(f["rule"] == "link_broken" and f["change"] == "baseline" for f in first["findings"]["findings"])
+    second = main_mod.run_daily(cfg, tmp_path, day="2026-11-08", client=client_for(cfg, link_routes()),
+                                psi_kwargs=psi_kwargs())
+    doc = snap.read_source(root, "2026-11-08", "findings")
+    assert doc == second["findings"]
+    assert doc["status"] in ("stable", "issues")
+    assert all(i["compared_to"] == "2026-11-07" for s, i in doc["sources"].items())
+    assert not [f for f in doc["findings"] if f["severity"] in ("critical", "warning")]
+    assert doc["all_stable"]
+    text = main_mod.format_summary(second)
+    assert "Findings written to" in text and "All stable" in text
+
+
+def test_cli_diff_only_and_compare_to(cfg, tmp_path, capsys):
+    cfg_path = tmp_path / "config.yaml"
+    cfg_path.write_text(yaml.safe_dump(cfg), encoding="utf-8")
+    assert main_mod.main(["--diff-only", "--config", str(cfg_path), "--date", "2026-11-08"]) == 1
+    assert "SNAPSHOT ERROR" in capsys.readouterr().err
+    root = snap.snapshot_root(cfg, tmp_path)
+    recs = {"robots": {"status": "ok", "allowed": {}, "mode": "parsed"}, "sitemap": {"status": "ok", "sitemaps": []},
+            "crawl": {"status": "ok", "pages": []}, "links": {"status": "ok", "links": []},
+            "psi": {"status": "disabled", "runs": []}}
+    for day in ("2026-11-07", "2026-11-08"):
+        snap.write_snapshot(root, day, recs, snap.build_meta(cfg, day, recs, datetime(2026, 11, 8, tzinfo=timezone.utc)))
+    assert main_mod.main(["--diff-only", "--config", str(cfg_path), "--date", "2026-11-08",
+                          "--compare-to", "2026-11-07"]) == 0
+    out = capsys.readouterr().out
+    assert "Findings for 2026-11-08 written" in out and "All stable" in out
+    assert main_mod.main(["--diff-only", "--compare-to", "7-11-2026"]) == 2
+    assert main_mod.main(["--collect-only", "--compare-to", "2026-11-07"]) == 2

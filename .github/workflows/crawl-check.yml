@@ -41,9 +41,9 @@ jobs:
         if: always()
         run: cat crawl-check.json || true
 
-      - name: Collect-only dry run (snapshot is not committed)
+      - name: Collect + diff dry run (baseline findings; nothing is committed)
         if: always()
         env:
           PYTHONPATH: src
           PSI_API_KEY: ${{ secrets.PSI_API_KEY }}
-        run: python -m seo_reviewer.main --collect-only --config config.yaml
+        run: python -m seo_reviewer.main --config config.yaml

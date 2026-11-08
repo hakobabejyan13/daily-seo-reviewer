@@ -1,12 +1,21 @@
 """Run the daily SEO review.
 
 Usage (from the repo root):
-    PYTHONPATH=src python -m seo_reviewer.main --collect-only [--config config.yaml] [--date YYYY-MM-DD]
+    PYTHONPATH=src python -m seo_reviewer.main [--collect-only | --diff-only]
+        [--config config.yaml] [--date YYYY-MM-DD] [--compare-to YYYY-MM-DD]
 
-Only --collect-only exists so far: it collects robots.txt, the sitemap,
-the on-page crawl, the link check and PageSpeed Insights, writes today's
-snapshot (UTC date) to storage.snapshot_dir and applies retention. Later
-tasks add diff, report and delivery.
+Modes:
+  (default)       collect + diff: collect robots.txt, the sitemap, the
+                  on-page crawl, the link check and PageSpeed Insights, write
+                  today's snapshot (UTC date) to storage.snapshot_dir, apply
+                  retention, then compare with earlier snapshots and write
+                  findings.json into the same day folder.
+  --collect-only  collect and write the snapshot only (no findings.json).
+  --diff-only     no network: rebuild findings.json for an existing snapshot
+                  (--date, default today).
+  --compare-to D  compare every source with day D instead of the last day
+                  that source was ok (PSI confirmations count from D).
+Later tasks add report and delivery.
 
 runtime.budget_seconds is counted from the start of the run; the crawl and
 the link check stop starting new requests once it is used up (record status
@@ -16,8 +25,9 @@ background thread at the same time as the site collectors (each call takes
 within the budget even at psi.timeout_seconds.
 
 A failed source does not crash the run: it is recorded with status "failed"
-and its error in the snapshot. Exit code: 0 = snapshot written,
-2 = config error or bad arguments, 1 = the snapshot could not be written.
+and its error in the snapshot, and the diff reports it as one finding.
+Exit code: 0 = snapshot (and findings) written, 2 = config error or bad
+arguments, 1 = the snapshot or findings could not be written or read.
 """
 
 from __future__ import annotations
@@ -36,6 +46,7 @@ from .collectors.psi import collect_psi, failed_record
 from .collectors.robots import collect_robots
 from .collectors.sitemap import collect_sitemap
 from .config import ConfigError, load_config
+from .diff import build_findings, format_findings, write_findings
 from .http_client import PoliteClient
 from .snapshot import (SnapshotError, apply_retention, build_meta, parse_day,
                        snapshot_root, utc_today, write_snapshot)
@@ -203,6 +214,30 @@ def run_collect_only(cfg: dict[str, Any], base_dir: Path, day: str | None = None
             "requests_made": client.request_count}
 
 
+def run_diff(cfg: dict[str, Any], base_dir: Path, day: str, records: dict[str, Any] | None = None,
+             compare_to: str | None = None) -> dict[str, Any]:
+    """Build and write findings.json for `day` (its snapshot must exist)."""
+    root = snapshot_root(cfg, base_dir)
+    doc = build_findings(cfg, root, day, records=records, compare_to=compare_to)
+    path = write_findings(root, day, doc)
+    return {"day": day, "path": path, "findings": doc}
+
+
+def run_daily(cfg: dict[str, Any], base_dir: Path, day: str | None = None,
+              client: PoliteClient | None = None, now: datetime | None = None,
+              psi_kwargs: dict[str, Any] | None = None, compare_to: str | None = None) -> dict[str, Any]:
+    """Collect + diff."""
+    result = run_collect_only(cfg, base_dir, day=day, client=client, now=now, psi_kwargs=psi_kwargs)
+    diff = run_diff(cfg, base_dir, result["day"], records=result["records"], compare_to=compare_to)
+    result["findings"] = diff["findings"]
+    result["findings_path"] = diff["path"]
+    return result
+
+
+def format_diff_summary(diff: dict[str, Any]) -> str:
+    return "\n".join([f"Findings for {diff['day']} written to {diff['path']}", *format_findings(diff["findings"])])
+
+
 def format_summary(result: dict[str, Any]) -> str:
     lines = [f"Snapshot {result['day']} written to {result['folder']}"]
     rb = result["records"]["robots"]
@@ -229,21 +264,30 @@ def format_summary(result: dict[str, Any]) -> str:
                  + (f", {result['records']['psi']['requests_made']} to the PSI API" if "psi" in result["records"] else ""))
     if result["deleted"]:
         lines.append(f"  retention: deleted {len(result['deleted'])} old snapshot(s): {', '.join(result['deleted'])}")
+    if "findings" in result:
+        lines.append(f"Findings written to {result['findings_path']}")
+        lines.extend(format_findings(result["findings"]))
     return "\n".join(lines)
 
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="Daily SEO reviewer.")
     ap.add_argument("--config", default="config.yaml")
-    ap.add_argument("--collect-only", action="store_true",
-                    help="collect robots.txt, sitemap, on-page crawl, link check and PSI and write today's snapshot (the only mode so far)")
+    mode = ap.add_mutually_exclusive_group()
+    mode.add_argument("--collect-only", action="store_true",
+                      help="collect robots.txt, sitemap, on-page crawl, link check and PSI and write the snapshot, no diff")
+    mode.add_argument("--diff-only", action="store_true",
+                      help="no network: rebuild findings.json for an existing snapshot (--date, default today)")
     ap.add_argument("--date", help="snapshot date YYYY-MM-DD (default: today, UTC)")
+    ap.add_argument("--compare-to", help="compare with this earlier day YYYY-MM-DD instead of the last ok day per source")
     args = ap.parse_args(argv)
-    if not args.collect_only:
-        print("Only --collect-only is implemented so far.", file=sys.stderr)
-        return 2
-    if args.date and parse_day(args.date) is None:
-        print(f"--date must be YYYY-MM-DD, got {args.date!r}", file=sys.stderr)
+    for name in ("date", "compare_to"):
+        value = getattr(args, name)
+        if value and parse_day(value) is None:
+            print(f"--{name.replace('_', '-')} must be YYYY-MM-DD, got {value!r}", file=sys.stderr)
+            return 2
+    if args.compare_to and args.collect_only:
+        print("--compare-to has no effect with --collect-only", file=sys.stderr)
         return 2
     try:
         cfg = load_config(args.config)
@@ -252,7 +296,13 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     base_dir = Path(args.config).resolve().parent  # snapshot_dir is relative to config.yaml
     try:
-        result = run_collect_only(cfg, base_dir, day=args.date)
+        if args.diff_only:
+            print(format_diff_summary(run_diff(cfg, base_dir, args.date or utc_today(), compare_to=args.compare_to)))
+            return 0
+        if args.collect_only:
+            result = run_collect_only(cfg, base_dir, day=args.date)
+        else:
+            result = run_daily(cfg, base_dir, day=args.date, compare_to=args.compare_to)
     except (SnapshotError, OSError) as e:
         print(f"SNAPSHOT ERROR: {e}", file=sys.stderr)
         return 1

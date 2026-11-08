@@ -50,10 +50,19 @@ thresholds:
   title_length: {min: 30, max: 60}
   meta_description_length: {min: 70, max: 160}
   psi_performance_drop_points: 10
+  sitemap_drop_percent: 10   # more than this share of sitemap URLs removed in one day = warning
   lab_tolerance:             # changes below these are treated as noise
     lcp_ms: 300
     cls: 0.02
     tbt_ms: 100
+
+rules:
+  # /x and /x/ count as the same URL when matching canonicals and links to pages
+  # (Hakob, 2026-11-08). A canonical that differs only by that slash is one grouped info finding.
+  trailing_slash_equivalent: true
+  group_min: 5               # more than N findings with the same rule and change -> one grouped finding
+  max_urls_per_finding: 50   # URL list cap inside a grouped finding
+  severity_overrides: {}     # e.g. {title_length: warning}; rule ids are in src/seo_reviewer/rules.py
 
 llm:
   enabled: true
