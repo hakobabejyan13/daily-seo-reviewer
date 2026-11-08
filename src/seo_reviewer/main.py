@@ -1,21 +1,24 @@
 """Run the daily SEO review.
 
 Usage (from the repo root):
-    PYTHONPATH=src python -m seo_reviewer.main [--collect-only | --diff-only]
+    PYTHONPATH=src python -m seo_reviewer.main [--collect-only | --diff-only | --report-only]
         [--config config.yaml] [--date YYYY-MM-DD] [--compare-to YYYY-MM-DD]
 
 Modes:
-  (default)       collect + diff: collect robots.txt, the sitemap, the
-                  on-page crawl, the link check and PageSpeed Insights, write
-                  today's snapshot (UTC date) to storage.snapshot_dir, apply
-                  retention, then compare with earlier snapshots and write
-                  findings.json into the same day folder.
-  --collect-only  collect and write the snapshot only (no findings.json).
+  (default)       collect + diff + report: collect robots.txt, the sitemap,
+                  the on-page crawl, the link check and PageSpeed Insights,
+                  write today's snapshot (UTC date) to storage.snapshot_dir,
+                  apply retention, compare with earlier snapshots and write
+                  findings.json into the same day folder, then write the
+                  markdown report delivery.report_dir/YYYY-MM-DD.md.
+  --collect-only  collect and write the snapshot only (no findings, no report).
   --diff-only     no network: rebuild findings.json for an existing snapshot
-                  (--date, default today).
+                  (--date, default today). The report is not touched.
+  --report-only   no network: rebuild the report from an existing
+                  findings.json (--date, default today).
   --compare-to D  compare every source with day D instead of the last day
                   that source was ok (PSI confirmations count from D).
-Later tasks add report and delivery.
+Later tasks add the LLM summary and delivery.
 
 runtime.budget_seconds is counted from the start of the run; the crawl and
 the link check stop starting new requests once it is used up (record status
@@ -26,7 +29,7 @@ within the budget even at psi.timeout_seconds.
 
 A failed source does not crash the run: it is recorded with status "failed"
 and its error in the snapshot, and the diff reports it as one finding.
-Exit code: 0 = snapshot (and findings) written, 2 = config error or bad
+Exit code: 0 = snapshot (and findings and report) written, 2 = config error or bad
 arguments, 1 = the snapshot or findings could not be written or read.
 """
 
@@ -48,6 +51,7 @@ from .collectors.sitemap import collect_sitemap
 from .config import ConfigError, load_config
 from .diff import build_findings, format_findings, write_findings
 from .http_client import PoliteClient
+from .report import build_report, load_inputs, write_report
 from .snapshot import (SnapshotError, apply_retention, build_meta, parse_day,
                        snapshot_root, utc_today, write_snapshot)
 
@@ -223,14 +227,25 @@ def run_diff(cfg: dict[str, Any], base_dir: Path, day: str, records: dict[str, A
     return {"day": day, "path": path, "findings": doc}
 
 
+def run_report(cfg: dict[str, Any], base_dir: Path, day: str) -> dict[str, Any]:
+    """Build and write reports/DAY.md from that day's findings.json and snapshot."""
+    inputs = load_inputs(snapshot_root(cfg, base_dir), day)
+    text = build_report(inputs["findings"], inputs["meta"], inputs["records"])
+    return {"day": day, "path": write_report(cfg, base_dir, day, text), "text": text,
+            "findings": inputs["findings"]}
+
+
 def run_daily(cfg: dict[str, Any], base_dir: Path, day: str | None = None,
               client: PoliteClient | None = None, now: datetime | None = None,
               psi_kwargs: dict[str, Any] | None = None, compare_to: str | None = None) -> dict[str, Any]:
-    """Collect + diff."""
+    """Collect + diff + report."""
     result = run_collect_only(cfg, base_dir, day=day, client=client, now=now, psi_kwargs=psi_kwargs)
     diff = run_diff(cfg, base_dir, result["day"], records=result["records"], compare_to=compare_to)
     result["findings"] = diff["findings"]
     result["findings_path"] = diff["path"]
+    report = run_report(cfg, base_dir, result["day"])
+    result["report_path"] = report["path"]
+    result["report"] = report["text"]
     return result
 
 
@@ -267,6 +282,8 @@ def format_summary(result: dict[str, Any]) -> str:
     if "findings" in result:
         lines.append(f"Findings written to {result['findings_path']}")
         lines.extend(format_findings(result["findings"]))
+    if "report_path" in result:
+        lines.append(f"Report written to {result['report_path']}")
     return "\n".join(lines)
 
 
@@ -278,6 +295,8 @@ def main(argv: list[str] | None = None) -> int:
                       help="collect robots.txt, sitemap, on-page crawl, link check and PSI and write the snapshot, no diff")
     mode.add_argument("--diff-only", action="store_true",
                       help="no network: rebuild findings.json for an existing snapshot (--date, default today)")
+    mode.add_argument("--report-only", action="store_true",
+                      help="no network: rebuild the markdown report from an existing findings.json (--date, default today)")
     ap.add_argument("--date", help="snapshot date YYYY-MM-DD (default: today, UTC)")
     ap.add_argument("--compare-to", help="compare with this earlier day YYYY-MM-DD instead of the last ok day per source")
     args = ap.parse_args(argv)
@@ -286,8 +305,8 @@ def main(argv: list[str] | None = None) -> int:
         if value and parse_day(value) is None:
             print(f"--{name.replace('_', '-')} must be YYYY-MM-DD, got {value!r}", file=sys.stderr)
             return 2
-    if args.compare_to and args.collect_only:
-        print("--compare-to has no effect with --collect-only", file=sys.stderr)
+    if args.compare_to and (args.collect_only or args.report_only):
+        print(f"--compare-to has no effect with --{'collect' if args.collect_only else 'report'}-only", file=sys.stderr)
         return 2
     try:
         cfg = load_config(args.config)
@@ -296,6 +315,10 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     base_dir = Path(args.config).resolve().parent  # snapshot_dir is relative to config.yaml
     try:
+        if args.report_only:
+            rep = run_report(cfg, base_dir, args.date or utc_today())
+            print(f"Report for {rep['day']} written to {rep['path']} ({rep['findings']['headline']})")
+            return 0
         if args.diff_only:
             print(format_diff_summary(run_diff(cfg, base_dir, args.date or utc_today(), compare_to=args.compare_to)))
             return 0

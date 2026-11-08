@@ -145,6 +145,8 @@ def test_run_daily_writes_findings_from_real_collector_records(cfg, tmp_path):
     first = main_mod.run_daily(cfg, tmp_path, day="2026-11-07", client=client_for(cfg, link_routes()),
                                psi_kwargs=psi_kwargs())
     assert first["findings"]["status"] == "baseline"
+    assert first["report_path"] == tmp_path / "reports" / "2026-11-07.md"
+    assert "This is a baseline run" in first["report_path"].read_text(encoding="utf-8")
     assert (root / "2026-11-07" / "findings.json").is_file()
     assert any(f["rule"] == "link_broken" and f["change"] == "baseline" for f in first["findings"]["findings"])
     second = main_mod.run_daily(cfg, tmp_path, day="2026-11-08", client=client_for(cfg, link_routes()),
@@ -157,6 +159,11 @@ def test_run_daily_writes_findings_from_real_collector_records(cfg, tmp_path):
     assert doc["all_stable"]
     text = main_mod.format_summary(second)
     assert "Findings written to" in text and "All stable" in text
+    assert "Report written to" in text
+    md = (tmp_path / "reports" / "2026-11-08.md").read_text(encoding="utf-8")
+    assert md == second["report"].rstrip("\n") + "\n"
+    assert md.startswith("# SEO review: Example, 2026-11-08") and "**All stable" in md
+    assert "Crawl ok (3 of 3 pages fetched)" in md  # coverage from crawl.json
 
 
 def test_cli_diff_only_and_compare_to(cfg, tmp_path, capsys):
@@ -174,5 +181,13 @@ def test_cli_diff_only_and_compare_to(cfg, tmp_path, capsys):
                           "--compare-to", "2026-11-07"]) == 0
     out = capsys.readouterr().out
     assert "Findings for 2026-11-08 written" in out and "All stable" in out
+    assert not (tmp_path / "reports").exists()  # --diff-only does not write the report
+    assert main_mod.main(["--report-only", "--config", str(cfg_path), "--date", "2026-11-08"]) == 0
+    out = capsys.readouterr().out
+    assert "Report for 2026-11-08 written to" in out
+    assert (tmp_path / "reports" / "2026-11-08.md").read_text(encoding="utf-8").startswith("# SEO review: Example")
+    assert main_mod.main(["--report-only", "--config", str(cfg_path), "--date", "2026-11-07"]) == 1  # no findings.json
+    assert "no findings.json" in capsys.readouterr().err
+    assert main_mod.main(["--report-only", "--compare-to", "2026-11-07"]) == 2
     assert main_mod.main(["--diff-only", "--compare-to", "7-11-2026"]) == 2
     assert main_mod.main(["--collect-only", "--compare-to", "2026-11-07"]) == 2

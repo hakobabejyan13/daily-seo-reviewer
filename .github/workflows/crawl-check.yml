@@ -41,9 +41,18 @@ jobs:
         if: always()
         run: cat crawl-check.json || true
 
-      - name: Collect + diff dry run (baseline findings; nothing is committed)
+      - name: Collect + diff + report dry run (nothing is committed)
         if: always()
         env:
           PYTHONPATH: src
           PSI_API_KEY: ${{ secrets.PSI_API_KEY }}
         run: python -m seo_reviewer.main --config config.yaml
+
+      - name: Show the report (also added to the run summary)
+        if: always()
+        run: |
+          for f in reports/*.md; do
+            [ -f "$f" ] || continue
+            cat "$f"
+            cat "$f" >> "$GITHUB_STEP_SUMMARY"
+          done
