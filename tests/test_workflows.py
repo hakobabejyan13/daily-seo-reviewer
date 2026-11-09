@@ -53,7 +53,8 @@ def test_daily_schedule_and_manual_inputs():
 def test_daily_permissions_concurrency_secrets():
     wf = load("daily-review.yml")
     assert wf["permissions"] == {"contents": "write"}
-    assert wf["concurrency"]["cancel-in-progress"] is False
+    # Runs queue instead of overlapping: one group for the workflow, never cancelled.
+    assert wf["concurrency"] == {"group": "daily-review", "cancel-in-progress": False}
     review = next(s for s in steps(wf) if s.get("id") == "review")
     for secret in ("PSI_API_KEY", "GEMINI_API_KEY", "TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID"):
         assert review["env"][secret] == "${{ secrets.%s }}" % secret
@@ -73,7 +74,10 @@ def test_daily_commit_back_only_after_a_good_review():
     assert "git add data/ reports/" in run
     assert 'git commit -m "report: $DAY"' in run
     assert "git diff --cached --quiet" in run  # nothing to commit = no commit
-    assert "git pull --rebase" in run
+    # Same-day re-runs push the same files: a rebase conflict keeps this run's files
+    # (-X theirs = the commit being replayed) and a failed rebase is aborted, not left half done.
+    assert "git pull --rebase -X theirs" in run
+    assert "git rebase --abort" in run
 
 
 def test_daily_failure_alert_and_delivery_warning():

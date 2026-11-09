@@ -101,11 +101,18 @@ jobs:
             exit 0
           fi
           git commit -m "report: $DAY"
+          # A queued run checks out the commit it was started on, so another run of the
+          # same day may already have pushed the same data/ and reports/ files. On a
+          # rebase conflict keep THIS run's files: during a rebase "theirs" is the commit
+          # being replayed (ours), so -X theirs = the newest run wins.
           for i in 1 2 3; do
             if git push origin "HEAD:${GITHUB_REF_NAME}"; then exit 0; fi
             echo "Push failed (attempt $i), rebasing on the remote branch and retrying"
             sleep $((i * 5))
-            git pull --rebase origin "${GITHUB_REF_NAME}"
+            if ! git pull --rebase -X theirs origin "${GITHUB_REF_NAME}"; then
+              echo "::warning::Rebase could not be resolved automatically (attempt $i); aborting it"
+              git rebase --abort || true
+            fi
           done
           echo "::error::Push failed after 3 attempts"
           exit 1

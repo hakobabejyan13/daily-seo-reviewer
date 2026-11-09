@@ -59,7 +59,9 @@ A typical day is about 211 requests to the site (2026-11-08: 211).
   to be safe, "disallow all" (nothing else is crawled that day).
 - **Limits:** only the first 500 KiB is read (Google's limit).
   `urllib.robotparser` applies the first matching rule in a group, not
-  Google's longest-match rule (see [limitations](limitations.md)).
+  Google's longest-match rule. For the current target this makes no
+  difference; a site whose robots.txt relies on longest-match order could
+  be read wrongly.
 
 ## 2. Sitemap
 
@@ -103,8 +105,7 @@ A typical day is about 211 requests to the site (2026-11-08: 211).
   890 were left out by the cap.
 - **Limits:** `links.max_links: 150` per day (1 req/s keeps this to ~2.5
   minutes). Links are ordered most-linked first, so the same ~150 links are
-  checked every day; the rest are never checked
-  (see [limitations](limitations.md)). External links are not checked
+  checked every day; the rest are never checked. External links are not checked
   (`links.check_external: false`).
 
 ## 5. PageSpeed Insights (PSI)
@@ -140,9 +141,9 @@ A typical day is about 211 requests to the site (2026-11-08: 211).
   checks, evidence, up to 3 example URLs per finding). Never raw HTML or
   snapshot data.
 - **What it returns:** at most 5 short lines summarizing those findings. A
-  validator checks the text before it is used
-  ([how it works](how-it-works.md#3-summary)); otherwise a deterministic
-  template summary is used.
+  validator checks the text before it is used (every URL, number and
+  finding id must be in the data sent; not empty, not cut off, at most
+  1,500 characters); otherwise a deterministic template summary is used.
 - **Model:** `llm.model: gemini-3.5-flash-lite` (pinned name, never a
   "latest" alias), `thinking_level: low`, 2,048 output tokens max, 90 s per
   call, 180 s for the whole summary step.
@@ -155,8 +156,10 @@ A typical day is about 211 requests to the site (2026-11-08: 211).
   paid tier key changes this.
 - **Availability:** working since the switch to Flash-Lite (crawl-check run
   42533456015, 2026-11-08: validated summary in ~1 s). The free tier can be
-  overloaded on any day; then the template is used. See
-  [limitations](limitations.md#gemini-availability).
+  overloaded on any day; then the template is used and the report says
+  why (`summary.json` `reason`). On daily-review, Gemini wrote the
+  2026-11-09 summary; on 2026-11-08 it was the template (timed out on
+  the older model gemini-3.8-flash).
 
 ## Telegram Bot API (delivery only)
 

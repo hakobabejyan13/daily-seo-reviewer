@@ -16,28 +16,48 @@ data/snapshots/YYYY-MM-DD/   one folder per UTC day, written by the daily run
   delivery.json   Telegram result     (Telegram Bot API)
 ```
 
-The reports built from them are in `reports/YYYY-MM-DD.md`.
+The reports built from them are in `reports/YYYY-MM-DD.md` (the Markdown
+review linked from the Telegram message).
 
-**Sample days:**
+**Where the data comes from and who writes it:** everything under
+`snapshots/` and `../reports/` is written by the `daily-review` GitHub
+Actions workflow (commits named `report: YYYY-MM-DD` by
+github-actions[bot]). Nothing in these folders is edited by hand. The
+workflow is started every day at 09:00 Asia/Yerevan (05:00 UTC) by an
+external cron-job.org job through GitHub's `workflow_dispatch` API, or by
+the "Run workflow" button.
+
+**History in this repo (2 days):**
 - [snapshots/2026-11-08/](snapshots/2026-11-08/) and
   [reports/2026-11-08.md](../reports/2026-11-08.md): the first run, a
-  baseline (nothing to compare with). 10,236 sitemap URLs, 51 pages crawled,
-  150 links checked, 0 broken, PSI mobile 99 / desktop 100, 3 info findings.
-  Summary: template (Gemini timed out).
+  baseline (nothing to compare with). Run 42528201040, collection
+  22:02:57-22:06:27 UTC. 10,236 sitemap URLs, 51 pages crawled, 150 links
+  checked, 0 broken, PSI mobile 99 / desktop 100, 3 info findings.
+  Summary: template (Gemini timed out on the older model gemini-3.8-flash).
+  Telegram: sent, 1,546 characters.
 - [snapshots/2026-11-09/](snapshots/2026-11-09/) and
   [reports/2026-11-09.md](../reports/2026-11-09.md): the first day-over-day
-  comparison, with 2026-11-08. All stable, 1 info finding: mobile lab LCP on
-  the homepage 2251 ms -> 2701 ms, "possible regression, awaiting
-  confirmation (1 of 2)". The 3 issues from the first day are listed as
-  unchanged (`ongoing`). PSI mobile 96 / desktop 100. Summary: Gemini
-  (`gemini-3.5-flash-lite`, validated). Telegram: the 2-line all-stable
-  message (384 characters).
+  comparison, with 2026-11-08. Run 42586153895, collection
+  08:28:21-08:31:51 UTC. All stable, 1 info finding: mobile lab LCP on the
+  homepage 2251 ms -> 3001 ms, "possible regression, awaiting confirmation
+  (1 of 2)". The 3 issues from the first day are listed as unchanged
+  (`ongoing`: 50 / 38 / 39 pages). PSI mobile 95 / desktop 100. Summary:
+  Gemini (`gemini-3.5-flash-lite`, validated). Telegram: the 2-line
+  all-stable message (384 characters).
 
-Later days are added by the `daily-review` workflow as commits named
-`report: YYYY-MM-DD`.
+  2026-11-09 was run three times. Run 42571863547 (06:14 UTC) was
+  committed first; run 42586153895 (08:28 UTC) replaced it, because a
+  re-run of the same UTC day overwrites that day's folder (its LCP was
+  2701 ms, PSI mobile 96; only the newest files are kept). Run 42586448513
+  (queued at 08:30, started 08:31:58 UTC) collected and sent its Telegram
+  message, but its push conflicted with the files just committed, so it
+  committed nothing and sent a failure alert. The commit-back step now
+  keeps the newest run's files on such a conflict instead of failing.
+
+Later days are added by the workflow, one folder and one report per day.
+Folders older than 90 days are deleted (`storage.retention_days`).
 
 Where each source comes from, and its limits: [docs/data-sources.md](../docs/data-sources.md).
-How the files are compared: [docs/how-it-works.md](../docs/how-it-works.md).
 
 ## General rules
 

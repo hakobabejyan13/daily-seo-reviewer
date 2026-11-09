@@ -225,3 +225,5 @@ PLAN.md
 DECISIONS.md
 CLAUDE.md
 .env
+# Local backups made by the agent (never commit)
+*.bak-*.tmp
