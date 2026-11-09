@@ -1,7 +1,7 @@
 """Diff engine: today's snapshot vs earlier snapshots -> findings.json.
 
 Deterministic. Every finding comes from data in data/snapshots/; the LLM
-(task 8) only summarizes this file.
+summary (summarize.py) only summarizes this file.
 
 Per source:
   - today failed      -> exactly one finding "SOURCE failed: ERROR" and no

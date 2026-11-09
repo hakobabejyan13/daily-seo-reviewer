@@ -140,7 +140,7 @@ def coverage(source: str, rec: dict[str, Any] | None) -> str:
 
 def source_health(doc: dict[str, Any], records: dict[str, Any] | None = None) -> list[dict[str, Any]]:
     """One row per source: status, compared_to, coverage, notes and, for a
-    failed source, the explicit sentence. Reused by later delivery tasks."""
+    failed source, the explicit sentence. Also used for the Telegram message."""
     records = records or {}
     skipped = {f["source"]: f for f in doc["findings"] if f["rule"] == "source_skipped_upstream"}
     rows = []

@@ -57,8 +57,8 @@ thresholds:
     tbt_ms: 100
 
 rules:
-  # /x and /x/ count as the same URL when matching canonicals and links to pages
-  # (Hakob, 2026-11-08). A canonical that differs only by that slash is one grouped info finding.
+  # /x and /x/ count as the same URL when matching canonicals and links to pages.
+  # A canonical that differs only by that slash is one grouped info finding.
   trailing_slash_equivalent: true
   group_min: 5               # more than N findings with the same rule and change -> one grouped finding
   max_urls_per_finding: 50   # URL list cap inside a grouped finding
