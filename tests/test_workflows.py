@@ -42,10 +42,9 @@ def test_actions_run_on_node24_versions(name):
 def test_daily_schedule_and_manual_inputs():
     wf = load("daily-review.yml")
     on = triggers(wf)
-    # Temporary test slot 07:17 UTC (11:17 Yerevan); final will be "17 4 * * *" (08:17 Yerevan).
-    assert on["schedule"] == [{"cron": "17 7 * * *"}]
-    minute = on["schedule"][0]["cron"].split()[0]
-    assert minute != "0"  # GitHub delays or drops scheduled runs most at the top of the hour
+    # Started only by workflow_dispatch (external cron-job.org at 09:00 Yerevan + Run button);
+    # a schedule: block would add a second daily run.
+    assert "schedule" not in on
     inputs = on["workflow_dispatch"]["inputs"]
     assert inputs["send_telegram"]["default"] is True
     assert inputs["compare_to"]["type"] == "string"
