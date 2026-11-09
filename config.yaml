@@ -6,7 +6,7 @@ site:
   name: "Cloudflare Blog"
   base_url: "https://blog.cloudflare.com"
   sitemap_url: "https://blog.cloudflare.com/sitemap.xml"
-  # Fallback (switch only if task 1 crawl check fails; log it in DECISIONS.md):
+  # Fallback (switch only if the crawl check fails for the main site):
   #   name: "Smashing Magazine"
   #   base_url: "https://www.smashingmagazine.com"
   #   sitemap_url: "https://www.smashingmagazine.com/sitemap.xml"

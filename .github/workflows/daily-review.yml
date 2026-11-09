@@ -1,6 +1,6 @@
 name: daily-review
 
-# The daily SEO review (PLAN.md section 7).
+# The daily SEO review.
 # Started by workflow_dispatch only: every day at 09:00 Asia/Yerevan by an external
 # cron-job.org job (calls the workflow_dispatch API with the default inputs), plus
 # the manual "Run workflow" button. No schedule: block, because GitHub never created
@@ -59,7 +59,7 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           COMPARE_TO: ${{ inputs.compare_to }}
-          NO_DELIVER: ${{ (github.event_name == 'schedule' || inputs.send_telegram) && ' ' || '--no-deliver' }}
+          NO_DELIVER: ${{ inputs.send_telegram && ' ' || '--no-deliver' }}
         run: |
           DAY=$(date -u +%F)
           echo "DAY=$DAY" >> "$GITHUB_ENV"

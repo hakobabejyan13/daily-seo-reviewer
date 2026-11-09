@@ -1,4 +1,4 @@
-# Approved in PLAN.md section 5. Exact versions pinned in task 1
+# Approved with the project plan. Exact versions pinned in task 1
 # (installed and tested with Python 3.12 on 2026-11-08).
 requests==2.34.2
 beautifulsoup4==4.15.0

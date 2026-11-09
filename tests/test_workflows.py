@@ -61,7 +61,9 @@ def test_daily_permissions_concurrency_secrets():
     assert "seo_reviewer.main" in review["run"]
     assert "--compare-to" in review["run"]
     # Scheduled runs always send; only a manual run with the box unticked is a dry run.
-    assert "github.event_name == 'schedule'" in review["env"]["NO_DELIVER"]
+    # Only the send_telegram input decides (default true, also for the cron-job.org dispatch).
+    assert review["env"]["NO_DELIVER"] == "${{ inputs.send_telegram && ' ' || '--no-deliver' }}"
+    assert "schedule" not in review["env"]["NO_DELIVER"]
 
 
 def test_daily_commit_back_only_after_a_good_review():
