@@ -1,8 +1,10 @@
 name: daily-review
 
 # The daily SEO review (PLAN.md section 7).
-# Every day at 05:00 UTC = 09:00 Asia/Yerevan (GitHub may start it 5-30 min late),
-# plus a manual "Run workflow" button.
+# TEMPORARY TEST (2026-11-09): every day at 07:17 UTC = 11:17 Asia/Yerevan, to see
+# whether GitHub creates the scheduled run (the 05:00 UTC slot was never created).
+# Final time after that: "17 4 * * *" (08:17 Yerevan). Off the top of the hour on
+# purpose: GitHub delays or drops scheduled runs most at :00. Plus a manual button.
 # Steps: unit tests -> collect + diff + summary + report + Telegram -> commit
 # data/ and reports/ back to the repo as "report: YYYY-MM-DD" (github-actions bot).
 # Secrets: PSI_API_KEY, GEMINI_API_KEY, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID.
@@ -11,7 +13,7 @@ name: daily-review
 # green and the report is still committed.
 on:
   schedule:
-    - cron: "0 5 * * *"
+    - cron: "17 7 * * *"  # TEMPORARY test slot, final: "17 4 * * *"
   workflow_dispatch:
     inputs:
       compare_to:

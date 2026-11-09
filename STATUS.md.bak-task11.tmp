@@ -1,0 +1,429 @@
+# Status
+
+Last updated: 2026-11-08 (Task 10 done, first manual run verified; scheduled run 2026-11-09 to check; next is Task 11)
+
+## Task 10: daily workflow, commit-back, failure alert (done; first manual run verified 2026-11-08, run 42528201040)
+
+**What was done**
+- First checks: no new Actions runs since Task 9. Gemini answered once (run 42523823770, validator passed); the next two runs were 503 / timeout with the template used. To verify on the first runs of daily-review.
+- New `.github/workflows/daily-review.yml`:
+  - Triggers: schedule cron `0 5 * * *` (09:00 Asia/Yerevan) + workflow_dispatch with inputs `compare_to` (optional YYYY-MM-DD -> --compare-to) and `send_telegram` (boolean, default true). Scheduled runs always send.
+  - permissions contents: write; concurrency group daily-review (no cancel); timeout 15 min; secrets PSI_API_KEY, GEMINI_API_KEY, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID.
+  - Steps: checkout@v7, setup-python@v7 (3.12, pip cache), pip install, unit tests (id tests), review `python -m seo_reviewer.main --config config.yaml --date DAY [--no-deliver] [--compare-to D]` (id review; DAY = `date -u +%F` at the start, saved to GITHUB_ENV), report printed + added to the run summary, delivery warning (::warning:: if delivery.json is missing or not "sent", else prints the message id), commit-back (id commit), failure alert.
+  - Commit-back runs only when the review step succeeded: git add data/ reports/; nothing staged = "Nothing to commit."; else commit "report: DAY" as github-actions[bot] (41898733+github-actions[bot]@users.noreply.github.com) and push HEAD to the run's branch, up to 3 tries with `git pull --rebase` and a short sleep in between; after 3 failures ::error:: and the step fails.
+  - Failure alert (`if: failure()`): Telegram sendMessage via curl "Daily SEO review failed at: STEP. Run: URL" (STEP = setup / unit tests / review run / commit-back from the step outcomes). No secrets in the text; GitHub masks the token in logs; only the HTTP code is printed. Missing secrets = warning, no alert.
+- `.github/workflows/crawl-check.yml`: checkout v4 -> v7, setup-python v5 -> v7 (both Node 24). Still manual dry run.
+- New `tests/test_workflows.py` (6 tests, no network): both workflows parse and use Node 24 action versions, cron + inputs, permissions/concurrency/secrets, commit-back after a good review only (git add / commit message / nothing-to-commit / pull --rebase), failure alert + delivery warning. 271 tests pass (Python 3.13 in the cloud). Every run: block passes `bash -n`; the inline Python compiles.
+
+**Files created / changed**
+- New: `.github/workflows/daily-review.yml`, `tests/test_workflows.py`
+- Changed: `.github/workflows/crawl-check.yml` (action versions), `DECISIONS.md` (3 entries), `STATUS.md`
+- No new dependency (curl and git are on the runner; PyYAML already pinned).
+
+**Decisions made** (logged in DECISIONS.md)
+- Minimal version (Hakob): no gzip, no llm.fallback_model. Repo growth: keep retention_days 90, measure after the first runs.
+- Commit-back only after a successful review; delivery failure is a warning only.
+
+**First manual run (Hakob)**
+1. Push the 3 files (the workflow file and its test together).
+2. GitHub -> Actions -> daily-review -> Run workflow (branch main, compare_to empty, send_telegram ticked).
+3. Expected: green; log "Telegram: sent, message id N"; step "Commit data/ and reports/" ends with a push; a new commit "report: 2026-11-08" by github-actions[bot] on main containing data/snapshots/2026-11-08/*.json and reports/2026-11-08.md; the Telegram "Full report" link opens that file.
+4. Before your next own push: `git pull` (the bot commits to main every day).
+
+**Open issues**
+- Live run 42528201040 (2026-11-08 22:02 UTC, commit ade455a, manual): green in ~5.5 min (review step 301 s). Baseline 0 critical / 0 warning / 3 info; Telegram sent (message id 10); commit-back pushed 3c16449 "report: 2026-11-08" by github-actions[bot] (10 files: data/snapshots/2026-11-08/*.json + reports/2026-11-08.md). Gemini timed out again (template used; the call only had ~30 s left of the budget). Failure alert step skipped (as expected).
+- Snapshot size measured: 3.1 MB per day raw (crawl.json 1.94 MB, sitemap.json 0.95 MB, links.json 0.20 MB, rest < 15 KB). Bigger than the 1.5 MB estimate; git delta-compresses unchanged parts. Hakob chose no gzip for now; revisit if the repo grows too fast (crawl.json is the main candidate).
+- Gemini fix (Hakob: "fix and check", 2026-11-08 22:44): crawl-check #18 (run 42531103942, new GEMINI_API_KEY) still used the template: both calls timed out (60 s, then the ~30 s left of runtime.budget_seconds); key masked as *** in the log, no key text found. Fix (uncommitted): the summary now has its own window, new config key llm.budget_seconds 180, counted after the diff (not part of runtime.budget_seconds); llm.timeout_seconds 60 -> 90 (two attempts fit). crawl-check job timeout 10 -> 15 min (run can now take ~8.5 min). 272 tests (new: summary window starts after collection). NEXT: Hakob pushes, runs crawl-check; expect 'Summary written ...: Gemini' or a real HTTP status / 90 s timeout.
+- Fix check: crawl-check #19 (run 42532418678, commit 7a81497) green in 6.8 min; the new window works (collection 22:53:13-22:56:45, then two full 90 s Gemini attempts), but Gemini timed out both times again, template used. Key masked (***), not in the log. So it is the model's latency, not our budget. Next option is a different (lighter) model or llm.fallback_model: Hakob's decision.
+- Model switch (Hakob, 2026-11-08 23:03): llm.model gemini-3.8-flash -> gemini-3.5-flash-lite (newest stable Flash-Lite on ai.google.dev/gemini-api/docs/models; thinking docs list minimal/low/medium/high for it). thinking_level low and timeout 90 s kept. The model list could not be read with the key (both the cloud sandbox and the device VM proxy block generativelanguage.googleapis.com), so availability to the key is checked by the next run: a 404 would name it. NEXT: push config.yaml, run crawl-check.
+- VERIFIED: crawl-check #20 (run 42533456015, commit 422925f): GEMINI WROTE THE SUMMARY. gemini-3.5-flash-lite answered in about 1 s (findings 23:09:21, step done 23:09:22), tokens prompt 665 / output 118 / thinking 0, validator passed, text matches findings (baseline 0/0/3 info, F001-F003). Key masked (***), not in the log. Step 211 s.
+- Still pending: the first scheduled run 2026-11-09 05:00 UTC (first day-over-day compare). Check: commit-back, Telegram, and whether Gemini (now gemini-3.5-flash-lite, verified once on crawl-check #20) keeps writing the summary.
+- Repo growth: measure the size of data/snapshots/DAY after the first runs.
+- A failed review run commits nothing that day (by design); the next run compares with the last good day.
+- Still open from earlier: thresholds noise, link coverage rotation, robotparser first-match order (task 11 docs), CRLF diffs, PSI notes / grouped "What" line polish (deferred), llm.fallback_model (not added, Hakob said no for now).
+
+**Ready to commit**
+Committing is up to Hakob. Optional hint: `task 10: daily-review workflow with commit-back and failure alert`
+
+## Task 9: Telegram delivery (done; live send verified 2026-11-08, run 42526331816)
+
+**What was done**
+- First check: the Task 8 Gemini answer is deferred to Task 10 (Hakob, 2026-11-08); nothing new to read.
+- `src/seo_reviewer/deliver/telegram.py` (PLAN.md section 6 path; the old prompt said src/seo_reviewer/telegram.py, PLAN wins):
+  - `build_message(cfg, doc, summary, records)` -> {text, findings, total}. Built only from findings.json, summary.json and the snapshot records; no LLM call, no new numbers.
+    - Line 1: mark + "SITE · DATE · STATUS": Critical / Warnings (any critical / warning, "(baseline run)" added on a baseline), All stable, Baseline run (info only), Changes (info only).
+    - Line 2: "N critical, N warning, N info · compared with DAY" (or "first run, nothing to compare with", or per-source days).
+    - Summary: Gemini text under "AI summary"; template = the one line "Summary: template" (its text would repeat the findings list).
+    - One explicit line per failed / not-run source, reusing report.source_health alerts ("PSI failed: ...; Core Web Vitals and PageSpeed scores not compared today."). source_failed / source_failed_critical / source_skipped_upstream findings are not repeated in the list.
+    - "Findings (top N of M)": up to delivery.telegram.max_findings_in_message (5) in findings.json order (severity, regressions first). Each: severity mark + severity + check (change label, regression), message when it says more, URL (grouped: "N URLs, e.g. URL"), "Linked from N page(s), e.g. URL" for broken links, old -> new in <code>, "Next: " step from the rules.
+    - "Sources: robots.txt ok · Sitemap ok (N URLs from ...) · Crawl ok (51 of 51 pages fetched) · Links ok (...) · PSI ok (...)" from report.source_health coverage (robots mode left out), then a "Full report" link to delivery.report_base_url/DAY.md.
+    - All stable = 2 lines (header with "compared with DAY (N info)", then sources + link), plus alert lines only if a source failed.
+    - Length: <= 4096 UTF-16 units (Telegram counts that way); drops findings from the end, then shortens the summary, then cuts on a line boundary.
+    - HTML parse mode: every text piece html-escaped (&, <, >; quotes too in the href). Only <b>, <code>, <a> are written.
+  - `send_message`: POST https://api.telegram.org/bot{token}/sendMessage with chat_id, text, parse_mode, link_preview_options {is_disabled: true}; timeout (10 s connect, delivery.telegram.timeout_seconds read). Retries (max 2 attempts): 5xx, timeout and connection error after 2 s; 429 only when parameters.retry_after <= 30 s (waits that long); 400 "can't parse entities" once as plain text (tags stripped). 400 chat not found / 401 = failed at once.
+  - Token and chat id are never logged or stored; both are scrubbed from every error text.
+  - `deliver(...)` never raises for Telegram problems -> record: schema_version, date, channel, generated_at, status sent / skipped / failed, reason, http_status, attempts, message_id, plain_text_fallback, chars, finding_ids, findings_total, summary_source, report_url, text. Skipped reasons: "--no-deliver (dry run)", "delivery.telegram.enabled is false", "TELEGRAM_BOT_TOKEN and/or TELEGRAM_CHAT_ID not set".
+- `main.py`: default run = collect -> diff -> summarize -> report -> deliver; writes data/snapshots/DAY/delivery.json. New `run_deliver()`, `--deliver-only` (send an existing day's message; no other network) and `--no-deliver` (build + record, do not send; allowed with the default run and --deliver-only, exit 2 with the other modes). A Telegram failure or a crash in delivery never loses the report and keeps exit code 0; the log prints "DELIVERY FAILED: REASON. The report is written; only the Telegram message is missing." Every run log prints the message as plain text.
+- `diff.py`: delivery.json is not read as a source record. `config.py`: new required key delivery.telegram.timeout_seconds; parse_mode must be HTML. `config.yaml`: timeout_seconds 20 + comments.
+- `.github/workflows/crawl-check.yml` (Hakob chose 2026-11-08): new workflow_dispatch input `send_telegram` (boolean, default false). Off = `--no-deliver` (message printed in the log, nothing sent); on = real send. Step passes TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID secrets. Step renamed "Collect + diff + summary + report + Telegram dry run".
+- Tests: 265 total (29 new in tests/test_telegram.py): issues message layout, top-N cap, template one-word, every number/URL from the data, HTML escaping, all stable 2 lines, failed source explicit and not repeated, upstream not run, grouped finding, length cap, UTF-16 length, request shape (chat_id, parse_mode, no preview, timeout), 429 short retry / long no wait, 5xx, timeout, connection error scrubbing, 400/401 no retry, HTML rejected -> plain text, missing secrets (3 cases), disabled and --no-deliver, delivery.json written and ignored by the diff, CLI --deliver-only / --no-deliver / arg errors, failure and crash keep the report. conftest removes TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID for every test, so no test can message a real chat. All pass on Python 3.12 in the cloud; compiled, config loads and main imports on the device's Python 3.10.
+- Hakob created the bot and put TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID in .env and in the GitHub Actions secrets (2026-11-08).
+
+**Files created / changed**
+- New: `src/seo_reviewer/deliver/__init__.py`, `src/seo_reviewer/deliver/telegram.py`, `tests/test_telegram.py`
+- Changed: `src/seo_reviewer/main.py`, `config.py`, `diff.py`, `config.yaml`, `tests/conftest.py`, `.github/workflows/crawl-check.yml`, `DECISIONS.md` (3 entries), `STATUS.md`
+- No new dependency (requests already pinned; Telegram Bot API approved in PLAN.md section 5).
+
+**Decisions made** (logged in DECISIONS.md)
+- Message layout, template = one word, failed-source lines, length cap; retry rules and plain-text fallback; delivery.json, exit code 0 on delivery failure; --deliver-only / --no-deliver; crawl-check send_telegram switch (Hakob).
+
+**Live run 42523823770 (2026-11-08, commit ea2fcb1, send_telegram on)**: green. Telegram answered HTTP 404 Not Found = the bot token is invalid (the .env value has no ':' and is 37 chars; a BotFather token is digits:35 chars). Hakob to copy the full token from @BotFather into the TELEGRAM_BOT_TOKEN secret and .env, then re-run. The message itself was built and printed correctly; delivery.json recorded failed, report written.
+Gemini answered for the first time: gemini-3.8-flash, prompt 665 / output 140 / thinking 0 tokens, validator passed, text matches the findings (baseline 0/0/3 info). Gemini is now verified live once.
+Re-run 42525260686 (new token): token accepted, Telegram HTTP 400 "chat not found" = TELEGRAM_CHAT_ID wrong or the bot was never started by that user (asked Hakob to press Start / copy chat.id from getUpdates / check no quotes in the secret). Gemini 503 high demand that run, template used.
+Re-run 42526331816 (fixed chat id): TELEGRAM SENT, message id 9, 1546 chars, 3 of 3 findings, 1 attempt. Telegram delivery VERIFIED live 2026-11-08. (Gemini timed out that run, template used.)
+
+**Open issues**
+- NEXT LIVE CHECK: after the push, run crawl-check with "send_telegram" ticked. Expected log line "Telegram: sent ..., message id N"; the chat gets the message. If it fails, the log says why ("DELIVERY FAILED: Telegram HTTP 400: Bad Request: chat not found" = wrong chat id or the bot was never messaged / added to the group; 401 = wrong token).
+- The message has not been seen in a real Telegram client yet (only the HTML string in tests). Check that the emoji marks and <code> blocks read well on a phone.
+- Exit code stays 0 when delivery fails; Task 10 should surface it (e.g. a ::warning:: annotation from delivery.json, or the failure alert) without blocking the commit-back.
+- crawl-check run can take ~300 s (Gemini timeouts) + Telegram (max ~2 x 20 s + 30 s); workflow timeout is 10 min, fine.
+- Telegram message text is stored in delivery.json (public repo once Task 10 commits data/): it only holds public-site findings, no secrets.
+- Still deferred unless Hakob asks: PSI notes cell repeats the URL per strategy; grouped findings repeat the check name in the "What" line. llm.fallback_model pending Hakob's answer.
+- Still open: thresholds noise, link coverage rotation, Node 20 action versions (task 10), robotparser first-match order (task 11 docs), CRLF diffs, repo growth (task 10).
+
+**Ready to commit**
+Committing is entirely up to Hakob (any split is fine). Also still uncommitted from Task 8: `src/seo_reviewer/summarize.py` (whole seconds in the timeout reason), `docs/limitations.md`. Optional hint: `task 9: Telegram delivery (message, retries, delivery.json, --no-deliver)`
+
+## Task 8: LLM summary (Gemini) with validator and template fallback (done; Gemini answer to verify on the first scheduled runs in Task 10)
+
+**What was done**
+- First check: Task 7 live run 42516537184 already verified (baseline, 0 critical, 0 warning, 3 info), marked done above.
+- `src/seo_reviewer/summarize.py`:
+  - `summarize(cfg, doc, env=None, session=None, sleep=...)` -> summary record; never raises for API problems. `write_summary(root, day, rec)` writes data/snapshots/DAY/summary.json; `load_summary(root, day, doc)` reads it back and falls back to the template if it is missing or belongs to an older findings.json (sha256 check).
+  - Gemini call: POST llm.endpoint ({model} = llm.model), header X-goog-api-key from env llm.api_key_env, generationConfig {maxOutputTokens: llm.max_output_tokens (800), temperature 0.2, thinkingConfig {thinkingBudget: llm.thinking_budget (0)}}, timeout (10 s connect, llm.timeout_seconds read). One retry on 5xx after 2 s; 429 and timeouts are not retried. The key is never stored and is scrubbed from every error text.
+  - Input to the model = compact findings.json (headline, counts, source status/error/compared_to, up to 40 findings without suggested_next_step or details, max 3 example URLs per grouped finding, ongoing counts). Prompt rules: only these findings, regressions first, reference ids, only URLs/numbers from the input, no new numbers, no next steps, plain text, max 5 lines / 100 words.
+  - Validator: URLs (trailing slash ignored), numbers and finding ids must appear in the data the model got; not empty, not cut off (finishReason MAX_TOKENS), not blocked (promptFeedback.blockReason / other finishReason), <= 1500 chars. Fail -> template, reason "Gemini summary failed validation: ..." and the rejected text is kept in summary.json for debugging.
+  - Template (deterministic): headline, "SOURCE failed: ERROR." lines, top 3 findings ("F001 info: message (N URLs) [evidence]"), "... and N more in the report." Used when llm.enabled is false, no key, 429/5xx/4xx, timeout, connection error, empty/blocked/cut-off answer, validation failure.
+  - Record: schema_version, date, findings_generated_at, findings_sha256, generated_at, source (gemini/template), reason, model, text, finding_ids, validation_errors, rejected_text (only on validation failure), usage {prompt_tokens, output_tokens, thought_tokens, total_tokens}. Task 9 can read summary.json for the Telegram message.
+- `report.py`: "## Summary" right after the header (before the baseline note / source health), with an italic line "Written by Gemini (gemini-2.5-flash) from findings.json only; checked: ..." or "Template summary (no AI). Gemini not used: REASON."; the template's first line (= headline) is not repeated. Footer says which part is AI-written. Everything else is unchanged and deterministic.
+- `main.py`: default run = collect -> diff -> summarize (summary.json) -> report. The run log prints "Summary written to ...: Gemini MODEL (tokens: prompt X, output Y, thinking Z)" or "template (Gemini not used: REASON)" plus the text and any rejected-validation reasons. --collect-only and --diff-only unchanged (no Gemini call); --report-only reuses summary.json, no network, prints "summary: gemini|template".
+- `diff.py`: summary.json is not read as a source record (one-line change).
+- `config.py`: llm.provider must be gemini, llm.model must not contain "latest", llm.endpoint must contain {model}. `config.yaml`: only the thinking_budget comment changed.
+- `.github/workflows/crawl-check.yml`: dry-run step passes GEMINI_API_KEY from secrets; step renamed "Collect + diff + summary + report dry run".
+- Tests: 230 total (31 new: tests/test_summarize.py, one in test_main.py, one in test_config.py). Fake Gemini session: ok, request shape (header, maxOutputTokens 800, thinkingBudget 0, timeout), 429 (not retried), 503 then 500, 503 then ok, 400, timeout, connection error, empty, MAX_TOKENS, SAFETY, blockReason, no candidates, non-JSON, invented number, invented URL, unknown id, key scrubbing, disabled, missing/blank key, stale summary.json, report sections. conftest removes GEMINI_API_KEY from the environment for every test, so no test can call the real API. All pass on Python 3.13 in the cloud; compiled and config loads on the device's Python 3.10.
+
+**Live run 42518853117 (2026-11-08, commit 12ab55a): green, but Gemini returned HTTP 404** "This model models/gemini-2.5-flash is no longer available to new users. Please update your code to use models/gemini-3.8-flash". The fallback worked as designed: the report's Summary section says "Template summary (no AI). Gemini not used: Gemini HTTP 404: ..." and lists F001-F003 (baseline 0 critical, 0 warning, 3 info). The key itself is accepted (404, not 403).
+Follow-up (uncommitted, in the folder): new config key `llm.thinking_level` (Gemini 3+) next to `llm.thinking_budget` (Gemini 2.5), only one may be set; config.yaml uses model gemini-3.8-flash (Hakob confirmed 2026-11-08), thinking_level low, thinking_budget null, max_output_tokens 2048 (thought tokens count against it on Gemini 3; "minimal" is not supported on 3.8 Flash per Google's thinking docs). Also fixed: template no longer repeats "(N URLs)" when the message already has the count; no double period after the fallback reason. Tests: 234 (conftest pins the LLM settings so tests do not depend on config.yaml's model).
+thinkingBudget 0 is therefore moot for now; Gemini 3.8 Flash cannot turn thinking off.
+Pushed as d95068c. Live runs on gemini-3.8-flash, both green with the template fallback: 42519692526 = HTTP 503 "This model is currently experiencing high demand" twice (model and request accepted, no 400 on thinkingLevel); 42520067334 = timed out after 30 s. Follow-up (uncommitted, in the folder): llm.timeout_seconds 60, a timeout is retried once, and the call respects the run deadline (starts only with >= 15 s left, read timeout cut to the time left). Tests: 236. Gemini output not seen live yet. Pushed as 45d8985; run 42520720881: both Gemini calls timed out (60 s, then the ~30 s left in the budget), template used, the step took the full 300 s. Gemini 3.8 Flash has never answered within 60 s from Actions so far (503 high demand, then timeouts). Next: measure latency with a tiny request from Hakob's PC; if still slow, try another model or move the summary out of the 5-minute budget (needs Hakob's OK). Small fix uncommitted: the timeout reason shows whole seconds.
+Hakob's local test (2026-11-08): HTTP 503 after 17.8 s on gemini-3.8-flash with a one-line prompt, so the model is overloaded on Google's side, not a key/Actions/code problem. Hakob: stop here, verify Gemini on the first scheduled runs in Task 10. The fallback covers it. Added docs/limitations.md (new file, LLM section; task 11 completes it). Optional llm.fallback_model (lighter model for the second attempt): Hakob chose "not now" (2026-11-08); revisit in Task 10 with data from the scheduled runs.
+
+**Files created / changed**
+- New: `src/seo_reviewer/summarize.py`, `tests/test_summarize.py`
+- Changed: `src/seo_reviewer/main.py`, `report.py`, `config.py`, `diff.py`, `tests/conftest.py`, `tests/test_main.py`, `tests/test_config.py`, `config.yaml` (comment), `.github/workflows/crawl-check.yml`, `DECISIONS.md` (3 entries), `STATUS.md`
+- No new dependency (requests was already pinned).
+
+**Decisions made** (logged in DECISIONS.md)
+- Compact prompt input, retry only on 5xx, validator rules, template layout, summary.json schema with findings_sha256, report Summary section and footer wording, config guards.
+
+**Open issues**
+- Secret GEMINI_API_KEY created and first live run done (404, see above). NEXT LIVE CHECK: after the model switch is pushed, run crawl-check again. Original note: Hakob creates the GEMINI_API_KEY repository secret (Settings -> Secrets and variables -> Actions -> New repository secret, name GEMINI_API_KEY, value = key from https://aistudio.google.com/apikey), pushes, runs crawl-check. Expected: "Summary written to ...: Gemini gemini-3.8-flash (tokens: ..., thinking N)" in the log and "## Summary ... Written by Gemini" in the run summary report. Any fallback reason is printed in the log.
+- The validator checks URLs, numbers and ids, not meaning: a summary could still misdescribe a finding in words (e.g. call an info "critical"). The prompt forbids it and the full deterministic report follows. Worth a look in the first live runs.
+- Numbers written as words ("three") are not checked.
+- Gemini free tier: Google may use prompts to improve its products; the prompt holds only public-site findings. Note it in docs/data-sources.md (task 11).
+- Deferred from Task 7 (Hakob: fix later): PSI notes cell repeats the URL per strategy; grouped findings repeat the check name in the "What" line.
+- Still open: thresholds noise, link coverage rotation, Node 20 action versions (task 10), robotparser first-match order (task 11 docs), CRLF diffs, Telegram bot (PLAN.md section 10 item 3), repo growth (task 10).
+
+**Ready to commit**
+Committing is entirely up to Hakob (any split is fine). Still uncommitted: `src/seo_reviewer/summarize.py` (whole seconds in the timeout reason), `docs/limitations.md` (new). Optional hint: `task 8: limitations doc, rounded timeout text`
+
+## Task 7: report builder (done)
+
+**What was done**
+- `src/seo_reviewer/report.py`: `build_report(findings_doc, meta, records)` -> markdown; `load_inputs(root, day)` reads findings.json, meta.json and the day's source records; `write_report(cfg, base_dir, day, text)` writes delivery.report_dir/YYYY-MM-DD.md (relative to config.yaml, atomic, LF). `source_health(doc, records)` returns one row per source (status, compared_to, coverage, notes, alert) so task 9 can reuse it for the Telegram source line. No LLM, no new numbers: values are copied from findings.json / snapshot; next steps are printed exactly as the rules wrote them.
+- Layout: title "SEO review: SITE, DATE"; bold headline from findings.json; status, site, "Compared with" (one day, per-source days, or --compare-to), finding counts, run line from meta (start/finish, requests to the site and to the PSI API).
+  - baseline: a note that this is a baseline run (current issues, not changes), source health table, findings by severity.
+  - issues: source health table (alert lines at the top for failed sources), then Critical / Warning / Info sections in findings.json order (regressions first inside a severity). Each finding: id + check, severity, change label (new, fixed, possible regression not confirmed yet, ...), regression tag, source + rule id, message when it says more than "check: url", URL, evidence `old -> new` with evidence_source, linked-from pages for broken links, affected URL list for grouped findings / sitemap URL lists (collapsed in <details> above 5; "... and N more (see findings.json)" when capped), next step.
+  - stable: short report (about 15 lines): headline, one "Sources:" line with coverage, info findings as one-liners (max 10), known-issue counts.
+  - Failed source, always explicit: "PSI failed: ERROR; Core Web Vitals and PageSpeed scores not compared today." (per-source sentence for robots, sitemap, crawl, links, psi); upstream-skipped sources say "CRAWL not run: robots failed (...)". Partial sources show their reasons.
+  - Known issues: findings.json "ongoing" (check, severity, rule, count, one example).
+  - Footer: built from data/snapshots/DATE/findings.json (generated_at, tool version); no AI-written text.
+  - Site text is markdown-escaped (no raw HTML from page titles); URLs are <autolinks>; evidence in code spans.
+- `main.py`: default mode = collect + diff + report ("Report written to ..." in the summary). `--collect-only` and `--diff-only` unchanged (--diff-only does not touch the report). New `--report-only` (no network; needs findings.json for --date; exit 1 if missing). `--compare-to` with --report-only = exit 2.
+- `.github/workflows/crawl-check.yml`: dry-run step renamed "Collect + diff + report dry run"; new last step prints reports/*.md and appends it to the run summary page ($GITHUB_STEP_SUMMARY). Nothing is committed.
+- Tests: 199 total (16 new in tests/test_report.py, test_main.py extended): baseline, stable (short), stable with no changes, issues order, failed source, upstream not run, partial, grouped finding collapsed, truncated list, PSI pending in short and long form, compare-to line, escaping, write path, source health rows, and "every number in the report appears in findings.json / snapshot files". All pass on Python 3.13 in the cloud; compiled and imported on the device's Python 3.10.
+
+**Files created / changed**
+- New: `src/seo_reviewer/report.py`, `tests/test_report.py`
+- Changed: `src/seo_reviewer/main.py`, `tests/test_main.py`, `.github/workflows/crawl-check.yml`, `DECISIONS.md` (2 entries), `STATUS.md`
+- No new dependency. config.yaml unchanged (delivery.report_dir "reports" already existed).
+
+**Decisions made** (logged in DECISIONS.md)
+- Report layout and the three modes; coverage counts read from the snapshot records; failed-source sentences.
+- --diff-only stays findings only; new --report-only; crawl-check shows the report in the run summary.
+
+**Open issues**
+- Live check DONE: run 42516537184 (2026-11-08), baseline 0 critical, 0 warning, 3 info; collect+diff+report step 210 s.
+- reports/ is not gitignored on purpose (the daily workflow commits it in task 10). A local run creates reports/YYYY-MM-DD.md; do not commit local test reports by accident.
+- The report has no LLM summary yet. Task 8 adds it; the report should then say whether the summary is from Gemini or the template fallback.
+- Baseline reports list up to 50 URLs per grouped finding (3 groups on the real site), collapsed, so the raw file is long but renders short on GitHub.
+- STATUS.md was accidentally overwritten during task 7 and restored from the copy read at the start of the thread (same content as 2026-11-08 19:15, plus this section).
+- Still open: thresholds noise (title/description length, info only), link coverage rotation, Node 20 action versions (task 10), robotparser first-match order (task 11 docs), CRLF diffs, Gemini key and Telegram bot (PLAN.md §10 item 3), repo growth (task 10).
+
+**Ready to commit**
+Committing is entirely up to Hakob (any split is fine). Optional hint: `task 7: deterministic markdown report (baseline, issues, all-stable modes, source health)`
+
+## Task 6: diff engine and severity rules (done)
+
+**What was done**
+- `src/seo_reviewer/rules.py`: one entry per rule id (47 rules) with default severity, check label and suggested_next_step (written by the rules, never the LLM). resolved / recovered / improved / cleared findings are always info; an unconfirmed PSI lab drop ("pending") is always info. `rules.severity_overrides` in config.yaml can change a rule's severity (validated: known rule id, critical/warning/info).
+- `src/seo_reviewer/diff.py`: `build_findings(cfg, root, day, records=None, compare_to=None)` -> findings document; `write_findings()` writes data/snapshots/YYYY-MM-DD/findings.json (atomic, compact); `format_findings()` for the log.
+  - Source gating: failed = exactly one finding "SOURCE failed: ERROR" (robots/sitemap/crawl critical, links/psi warning), no per-URL findings; if the upstream source failed too (crawl <- robots, links <- crawl) it is an info "not run" finding. Partial = one info finding with the reasons, then a like-for-like compare. Disabled = listed, not compared. Baseline per source = `last_day_with_status(source, before=today)` (ok only), or `--compare-to`. Previous day failed + today ok = info "recovered".
+  - robots: key URL allowed -> disallowed critical; mode -> disallow_all critical; parsed <-> allow_all info; declared sitemaps changed info.
+  - sitemap: added URLs info (one finding with the URL list), removed info, removed > thresholds.sitemap_drop_percent (10%) warning, lastmod changed info (one finding). Partial today = added only (missing files would look like removals).
+  - crawl (per page, matched by URL key): HTTP >= 400 critical, noindex critical, canonical missing critical, fetch failed / robots disallowed / redirects / canonical other / multiple canonicals / canonical target broken (from crawl + link results) / title missing / description missing / H1 missing = warning; title or description length, duplicate title or description across crawled pages, multiple H1, title/description/H1 changed = info; canonical changed = warning. Issue new on a page = change "appeared"; gone = "resolved" (info); on both days = "ongoing" (not a finding); page new in the newest-N window = "new_page". Trailing slash: see decisions.
+  - links: new broken internal link warning (also "not checked" yesterday -> broken today), broken on both days = ongoing, fixed = info, newly redirecting = info. Links that are crawled pages (source crawl) are left to the crawl rules (no double report).
+  - PSI lab (score, LCP, CLS, TBT; per URL x strategy): replay of the ok runs in earlier snapshots; regressed = beyond thresholds; pending info "possible regression, awaiting confirmation (k of N)", confirmed warning (then the new value is the reference, not repeated), cleared info. Failed runs/days are skipped (neither advance nor reset). CrUX compared directly with the previous ok run by category: FAST -> SLOW critical (crux_poor), other worse step warning, better info, data appearing/disappearing info; URL and origin separate, origin once per strategy. Baseline lists SLOW (warning) and AVERAGE (info) CrUX metrics.
+  - More than rules.group_min (5) findings with the same source, rule and change = one grouped finding (count, items capped at rules.max_urls_per_finding). PSI is never grouped.
+  - Ordering: critical, warning, info; inside a severity regressions first, then source order robots, sitemap, crawl, links, psi. Ids F001...
+  - findings.json: schema_version, tool_version, date, generated_at, site, compare_to, status (baseline / issues / stable), all_stable, headline, counts, sources {status, error, compared_to, baseline, notes}, findings [{id, severity, source, rule, check, change, regression, url, old_value, new_value, evidence "old -> new", evidence_source, compared_to, message, suggested_next_step, count, details?, items?}], ongoing [{rule, severity, check, count, urls}].
+- `main.py`: default mode (no flag) = collect + diff (writes findings.json, summary prints the findings). `--collect-only` unchanged. New `--diff-only` (no network, rebuild findings.json for an existing --date) and `--compare-to YYYY-MM-DD`.
+- `config.py` + `config.yaml`: new `rules` section (trailing_slash_equivalent true, group_min 5, max_urls_per_finding 50, severity_overrides {}) and thresholds.sitemap_drop_percent 10.
+- `.github/workflows/crawl-check.yml`: the dry-run step now runs collect + diff (`python -m seo_reviewer.main --config config.yaml`), so the log shows the real baseline findings. Nothing is committed by the workflow.
+- Tests: 183 total (36 new in tests/test_diff.py, 2 new in tests/test_main.py, incl. two days of real collector records = all stable). All pass on Python 3.13 in the cloud; syntax checked on the device's Python 3.10; config.yaml loads.
+
+**Files created / changed**
+- New: `src/seo_reviewer/diff.py`, `src/seo_reviewer/rules.py`, `tests/test_diff.py`
+- Changed: `src/seo_reviewer/main.py`, `src/seo_reviewer/config.py`, `config.yaml`, `tests/test_main.py`, `.github/workflows/crawl-check.yml`, `DECISIONS.md` (5 entries), `STATUS.md`
+- No new dependency.
+
+**Decisions made** (logged in DECISIONS.md)
+- Trailing slash: /x and /x/ are the same URL (Hakob chose, 2026-11-08); the slash-only canonical mismatch is one grouped info finding (canonical_slash_mismatch), shown once (baseline or when it first appears), then ongoing.
+- Findings are changes; persistent issues are "ongoing" counts; status baseline / issues / stable; grouping above 5.
+- Source gating and upstream folding; PSI run-level history for confirmation; CrUX category compare.
+- New config keys (rules section, sitemap_drop_percent).
+
+**Open issues**
+- RESOLVED: LIVE CHECK (2026-11-08 19:09 UTC, run 42513592615, commit aa0b375): green, collect + diff step 210 s, 211 site requests + 2 PSI. findings.json written, status baseline, 0 critical, 0 warning, 3 info: F001 canonical_slash_mismatch on 50 pages (grouped, as decided); F002 meta_description_length on 38 pages (descriptions 161-305 chars > 160); F003 title_length on 39 pages (homepage 15 chars, posts up to 114 > 60). robots, sitemap (10,236 URLs), crawl (51 pages), links (150 checked, 0 broken) and PSI (mobile 96 / desktop 100, CrUX all FAST) all ok, baseline. Real day-to-day diffs start with the daily cron (task 10).
+- Thresholds: thresholds.title_length max 60 and meta_description_length max 160 flag most Cloudflare posts (info only, then ongoing). Hakob may widen them in config.yaml if this is noise; not changed.
+- Expected first real diffs: sitemap_urls_added / sitemap_lastmod_changed most days (info only, so "all stable"). Lab PSI noise within tolerances is ignored.
+- Ongoing issues (e.g. a noindex page that stays noindex) do not appear as findings after the first day; the task 7 report should show the "ongoing" counts in a short "known issues" section so they are not forgotten.
+- Link coverage rotation (STATUS.md Task 4) still out of scope; check_external still off.
+- Still open: Node 20 action versions (task 10), robotparser first-match order (task 11 docs), CRLF diffs, Gemini key and Telegram bot (PLAN.md §10 item 3), repo growth (task 10).
+
+**Ready to commit**
+Committing is entirely up to Hakob (any split is fine). Optional hint: `task 6: diff engine and severity rules (findings.json, PSI confirmation, all-stable mode)`
+
+## Task 5: PageSpeed Insights collector (done)
+
+**What was done**
+- `src/seo_reviewer/collectors/psi.py`: `collect_psi(cfg, deadline, ...)`. One run per URL x strategy: psi.urls (empty = homepage; relative entries resolved against base_url; other hosts ignored with a note; duplicates removed) x psi.strategies. PSI API v5 runPagespeed, `category=performance`, key from env psi.api_key_env (PSI_API_KEY) as the `key` query parameter.
+- Per run: url, strategy, status (ok / failed / skipped), error, http_status, attempts, duration_s, lighthouse_version, fetched_at, final_url, run_warnings, lab {performance_score 0-100, lcp_ms, cls, tbt_ms}, field {url, origin, notes}. field.url / field.origin = {overall_category, metrics {lcp_ms, inp_ms, cls: {percentile (p75), category FAST/AVERAGE/SLOW}}} or null. "no field data (CrUX) for this URL / for the origin" is written in field.notes. When PSI sends origin data in loadingExperience (origin_fallback), it is NOT stored as URL data. CrUX CLS percentile is divided by 100 (PSI sends x100).
+- Own small client `PsiClient` (not the PoliteClient; robots.txt and the site rate limit do not apply to Google's API): read timeout psi.timeout_seconds, 10 s connect, psi.max_retries retries on 429/5xx/timeouts/connection errors (5 s backoff), no retry on 400/403. Google's error.message is kept in the error text. The key is never in the record, and every error text is scrubbed of it (`key=***`). Lighthouse runtimeError or no score = run failed, lab null.
+- Record: status ok / partial / failed / disabled, error, partial_reasons, notes, endpoint, limits, strategies, urls, counts (ok, failed, skipped, no_url_field_data), requests_made, runs, collected_at. No key = failed "no API key: environment variable PSI_API_KEY is not set", no request.
+- Budget: `main.collect` starts PSI in a background thread (`PsiWorker`, stdlib threading) at the start of the run, in parallel with robots/sitemap/crawl/links, same runtime.budget_seconds. A call or retry starts only if it can finish before the deadline at the full psi.timeout_seconds; otherwise it is skipped (record partial). main waits at most until the deadline + 5 s; a hang or crash becomes "PSI failed: ..." and the other sources are kept. Expected run time stays ~211 s (PSI 2 calls ~20-60 s run meanwhile).
+- `main.py --collect-only` writes psi.json; summary has a psi line, "PSI failed: ..." when failed, one row per run (status | strategy | score | LCP | CLS | TBT | time | url) plus a CrUX line (URL and origin), and "requests made: N to the site, M to the PSI API".
+- `config.py`: new cross-check psi.timeout_seconds < runtime.budget_seconds.
+- `.github/workflows/crawl-check.yml`: the dry-run step gets `PSI_API_KEY: ${{ secrets.PSI_API_KEY }}`.
+- Tests: 145 total (24 new in tests/test_psi.py, 3 new in test_main.py, 1 in test_config.py). Fixtures tests/fixtures/psi/*.json (ok with URL + origin CrUX, origin_fallback, no field data, Lighthouse runtime error, HTTP 400/403/429 bodies). All pass on Python 3.13 in the cloud; syntax checked on the device's Python 3.10.
+
+**Files created / changed**
+- New: `src/seo_reviewer/collectors/psi.py`, `tests/test_psi.py`, `tests/fixtures/psi/{mobile_ok,desktop_origin_fallback,no_field_data,runtime_error,error_400,error_403,error_429}.json`
+- Changed: `src/seo_reviewer/main.py`, `src/seo_reviewer/config.py`, `tests/test_main.py`, `tests/test_config.py`, `.github/workflows/crawl-check.yml`, `DECISIONS.md` (3 entries), `STATUS.md`
+- No new dependency (threading is stdlib). config.yaml unchanged.
+
+**Decisions made** (logged in DECISIONS.md)
+- Own PSI client instead of PoliteClient; key as `key` param, redacted from errors.
+- PSI runs in parallel with the site collectors; "must fit the deadline at full timeout" rule; crash/hang = PSI failed.
+- Record shape, origin_fallback handling, CLS /100.
+
+**Open issues**
+- RESOLVED: LIVE CHECK 3 (2026-11-08 18:43 UTC, run 42511346871, commit 2c67a54) after Hakob replaced the PSI_API_KEY secret: psi ok, 2 of 2 runs ok, 2 API requests. Homepage mobile: score 96, LCP 2701 ms, CLS 0.0, TBT 0 ms, 46.0 s; CrUX URL FAST (LCP 996 ms, INP 130 ms, CLS 0.0), origin FAST (LCP 1607 ms, INP 133 ms, CLS 0.0). Desktop: score 100, LCP 607 ms, CLS 0.0027, TBT 0 ms, 50.2 s; CrUX URL FAST (LCP 734, INP 29, CLS 0.0), origin FAST (LCP 1057, INP 34, CLS 0.0). Field names in the real response parse as expected (lab + URL and origin CrUX). PSI ran ~96 s in parallel: dry-run step 210 s, 211 site requests, inside the 300 s budget. Runs 1-2 got HTTP 403 ("...RunPagespeed are blocked" / "Permission denied on the service") because the secret held a different key.
+- (history) LIVE CHECK 1 (2026-11-08 18:24 UTC, run 42509813963, commit 2c67a54): workflow green, dry-run step 211 s (PSI ran in parallel, no extra time), 211 site requests + 2 PSI requests. PSI failed as designed with HTTP 403 "Requests to this API pagespeedonline method ...RunPagespeed are blocked." on both strategies (no retry, 0.1 s). That message means the key's API restrictions do not include the PageSpeed Insights API (or the key belongs to another project). Hakob to fix the key, then re-run crawl-check. Field names still to be confirmed on a real response.
+- LIVE CHECK 2 (18:36 UTC, run 42510801680): still 403, mobile "Permission denied on the service.", desktop "...RunPagespeed are blocked." Hakob's key shows API restriction = PageSpeed Insights API (set long ago). Likely the PSI_API_KEY secret holds a different key; Hakob to test the key in a browser (runPagespeed?url=https://example.com&key=...) and re-paste the secret, then re-run crawl-check.
+- (Before run 1) needs the GitHub secret PSI_API_KEY (Hakob creates it, see below), then push and run crawl-check manually. A keyless call from the cloud got HTTP 429 (Google's shared keyless daily quota), so a key is required.
+- How to get the key: Google Cloud console -> create/select a project -> APIs & Services -> Library -> "PageSpeed Insights API" -> Enable -> Credentials -> Create credentials -> API key -> restrict it to the PageSpeed Insights API. GitHub repo -> Settings -> Secrets and variables -> Actions -> New repository secret, name PSI_API_KEY. Locally: put it in .env (the code does not read .env by itself; export it or `set -a; . ./.env` before running).
+- The JSON field names (finalDisplayedUrl, runtimeError, loadingExperience.origin_fallback, CrUX metric names) follow the PSI v5 docs; the first live run should be checked against a real response.
+- Regression confirmation (psi.regression_confirmations, lab only; CrUX direct) is task 6.
+- A daily-quota 429 is retried once (5 s, harmless).
+- If psi.urls grows (each URL = 2 calls, ~20-60 s), calls are sequential inside the PSI thread; more than ~4 URLs may hit the budget (skipped, partial). Option for later: run strategies in parallel.
+- Still open from earlier tasks: trailing-slash duplicates (task 6), link coverage rotation, Node 20 action versions (task 10), robotparser first-match order (task 11), CRLF diffs, Gemini key and Telegram bot (PLAN.md §10 item 3), repo growth (task 10).
+
+**Ready to commit**
+Committing is entirely up to Hakob (any split is fine). Optional hint: `task 5: PageSpeed Insights collector (mobile + desktop, lab + CrUX, parallel to the crawl)`
+
+## Task 4: broken link checker (done)
+
+**What was done**
+- `src/seo_reviewer/collectors/links.py`: `collect_links(client, cfg, crawl_record, deadline)`. Input = internal_links of every crawled page with status ok and seo data (HTTP 200 HTML), with the crawled pages that link to each URL (`linked_from`, first 20 stored, `linked_from_count` exact). URLs the crawl already fetched today (page URL, or the final URL of a same-host redirect) reuse the crawl result (`source: "crawl"`, no second request, not counted in the cap). The rest are ordered most-linked first, then alphabetical; the first `links.max_links` are checked (`source: "check"`), the others only counted in `left_out_by_cap`.
+- Checking goes through PoliteClient (robots.txt obeyed: a disallowed link or redirect hop is recorded as disallowed and never requested; rate limit; retries). links.method HEAD first; GET (stream=True, body not read) when HEAD gets a network error or any HTTP status >= 400 (incl. 405/501), noted per link in `notes`. Redirects followed by hand (max 10, loop detection, every hop robots-checked, `redirect_chain` [{url, status, location, method}]); off-host redirects recorded, followed only if check_external. links.check_external false = same host only (the crawl stores same-host links only, so true has no extra effect yet; noted in the record).
+- Per link: url, status (ok/failed/disallowed/skipped), source, http_status, final_url, redirect_chain, method, error, notes, linked_from, linked_from_count. `is_broken()` = failed or final HTTP >= 400.
+- Record: status ok / partial (failed or skipped links, or crawl partial) / failed (crawl failed or missing, or no link could be checked) / disabled (links.enabled false, nothing requested); error, partial_reasons, notes (truncated pages, other-host links, cap), limits, unique_links, from_crawl, to_check, left_out_by_cap, counts (ok, failed, disallowed, skipped, broken, http_4xx, http_5xx, redirected, from_crawl, checked, get_fallback). Links listed most-linked first.
+- Same runtime.budget_seconds deadline as the crawl: no new link after it; the rest are skipped and the record is partial with the reason.
+- `main.py --collect-only` now writes links.json too; summary has a links line plus up to 50 rows of broken / redirected / disallowed links (status, http, method, linked-from count, url -> final).
+- Tests: 120 total (18 new in tests/test_links.py; test_main.py extended). `tests/conftest.py` make_response now marks the body as read so Response.close() works on fakes. All pass on Python 3.12 and 3.13 in the cloud; syntax checked on the device's Python 3.10.
+
+**Files created / changed**
+- New: `src/seo_reviewer/collectors/links.py`, `tests/test_links.py`
+- Changed: `src/seo_reviewer/main.py`, `tests/test_main.py`, `tests/conftest.py`, `config.yaml` (links.max_links 300 -> 150), `DECISIONS.md` (2 entries), `STATUS.md`
+- No new dependency. crawl-check.yml unchanged: its dry-run step now also runs the link check.
+
+**Decisions made** (logged in DECISIONS.md)
+- Link checker design (reuse crawl results, ordering, HEAD -> GET fallback on any failure, status semantics, cap is not a failure).
+- links.max_links 300 -> 150: at 1 req/s 300 links alone would use the whole 5-min budget after a ~1 min crawl, so links would be partial every day and PSI would have no time. Hakob confirmed (Claude recommended).
+
+**Open issues**
+- RESOLVED: live run on GitHub Actions (2026-11-08 18:05 UTC, run 42508138611, commit 80c3ed7): links ok. 1043 unique internal links on the 51 pages; 3 reused from the crawl, 150 checked with HEAD (0 needed GET), 0 broken, 0 redirected, 0 disallowed, 0 skipped; 890 left out by the cap. Whole dry-run step 211 s, 211 requests (crawl ~60 s, links ~150 s), inside the 300 s budget.
+- Only 3 links matched crawled pages: posts are crawled at the sitemap form without trailing slash (/vole-mole), but pages link to the slash form (/vole-mole/). Both answer 200 with no redirect, so the site serves duplicate URLs. Task 6 should decide whether to treat a trailing-slash-only difference as the same URL (also for canonical "other", see Task 3).
+- Coverage: with max_links 150 and most-linked-first order, the same ~150 site-wide links (navigation, tags, popular posts) are checked every day and ~890 article-body links never are. Stable for diffs, but a broken link inside a new post is likely missed. Option for later (task 6/10, Hakob to decide): give links from the newest pages priority, or rotate the unchecked rest across days.
+- Budget sharing with PSI (task 5): crawl ~1 min + links ~2.5 min leaves ~1.5 min. Task 5 must decide order or a reserved share (PSI calls take 10-40 s each).
+- check_external true needs the crawler to also store external links (not done; off by default).
+- Posts link to the sitemap URL form without trailing slash vs canonical with slash (see Task 3); if links point at /x and /x/ both, they are two URLs here.
+- Still open: Node 20 action versions (task 10), robotparser first-match order (task 11 docs), CRLF diffs, API keys and Telegram bot (PLAN.md §10 item 3), repo growth from crawl.json/links.json (task 10).
+
+**Ready to commit**
+Committing is entirely up to Hakob (any split is fine). Optional hint: `task 4: broken link checker (HEAD with GET fallback, robots-aware, capped)`
+
+## Task 3: on-page crawler (done)
+
+**What was done**
+- `src/seo_reviewer/collectors/crawl.py`: `select_pages(cfg, sitemap_record)` picks homepage + `crawler.extra_urls` (absolute or relative to base_url; other hosts ignored with a note) + the newest `crawler.max_pages` sitemap URLs by lastmod (parse_lastmod; same host only; undated URLs fill up after dated ones; duplicates removed). Sitemap failed -> homepage + extra_urls only, noted; sitemap partial -> picks from what was read, noted. `collect_crawl(client, cfg, sitemap_record, deadline)` fetches each page through PoliteClient with `allow_redirects=False` and follows redirects by hand (max 10 hops, same host only, loop detection), so every hop is robots-checked, rate-limited and stored in `redirect_chain` [{url, status, location}]. Off-host redirects are recorded, not followed.
+- Per page: url, reason (homepage / extra_url / sitemap), lastmod, status, error, http_status, final_url, redirect_chain, content_type, x_robots_tag (list), noindex + noindex_sources (x-robots-tag / meta-robots; "none" counts; UA-prefixed X-Robots-Tag only for googlebot), and `seo` (only for HTTP 200 HTML): title (+count, whitespace normalised, svg titles ignored), meta_description (+count; "" = present but empty, null = missing), h1 list, canonical (absolute, resolved against <base href>), canonical_raw, canonical_count, meta_robots (robots + googlebot), lang, links_total, internal_links (absolute, no fragment, deduped, max 1000/page) + internal_links_truncated. Charset from Content-Type, else bs4 detects it from the page. At most 5 MB of HTML parsed.
+- Page status: ok (got a final response, any HTTP code) / failed (network error after retries, redirect loop, >10 redirects) / disallowed (robots; not fetched, also when a redirect hop is disallowed) / skipped (runtime budget). Record status: ok / partial (failed or skipped pages, or sitemap not ok) / failed (nothing fetched, e.g. robots.txt unreachable -> every page recorded as disallowed). `counts` = ok, failed, disallowed, skipped, http_200, redirected, noindex. `selection_notes` and `partial_reasons` say why.
+- `http_client.py`: added `PoliteClient.now()` (the injectable clock), used for the budget deadline.
+- `main.py --collect-only` now also writes crawl.json. runtime.budget_seconds counts from the start of the run; the crawl starts no new request after it. The summary prints a crawl line plus one row per page (status, http, title length, description length, H1 count, canonical self/other/missing, noindex, internal links, url), so the crawl-check workflow log shows real values.
+- Tests: 100 total (17 new in tests/test_crawl.py, test_main.py updated), no network. Fixture HTML in tests/fixtures/crawl/ (home, noindex post, messy page with <base>, two descriptions, multi-valued rel canonical, three H1s; windows-1252 page). All pass on Python 3.12; syntax checked on the device's Python 3.10.
+
+**Files created / changed**
+- New: `src/seo_reviewer/collectors/crawl.py`, `tests/test_crawl.py`, `tests/fixtures/crawl/{home,post-noindex,post-messy,latin1}.html`
+- Changed: `src/seo_reviewer/main.py`, `src/seo_reviewer/http_client.py` (now()), `src/seo_reviewer/config.py` (2 new keys), `config.yaml` (sitemap_include/exclude), `tests/test_main.py`, `tests/test_config.py`, `DECISIONS.md` (2 entries), `STATUS.md`
+- No new dependency. crawl-check.yml unchanged: its existing dry-run step now also crawls (about 60 requests, ~1 min at 1 req/s).
+
+**Decisions made** (logged in DECISIONS.md)
+- Manual redirect following, page/record status semantics, HTTP 4xx/5xx recorded as data (status ok) for the diff to judge, internal links per page capped at 1000.
+
+**Open issues**
+- RESOLVED: live run on GitHub Actions (2026-11-08 17:36 UTC, run 42505789427, commit 3051cf6): crawl ok, 51 pages selected, 51 fetched, all HTTP 200, 0 redirected, 0 noindex, 0 failed/disallowed/skipped; 61 requests total, dry-run step took 60 s. Sitemap now ok with 10,236 URLs from all 9 files.
+- DONE after the first live run: the 50 newest by lastmod were mostly tag pages (17), author pages (12) and translated pages (18); only 5 English posts (tag/author lastmods change whenever a post is published). Hakob chose to add `crawler.sitemap_include` / `crawler.sitemap_exclude` (regexes on the URL path, re.search; only for the sitemap pick, not homepage/extra_urls; validated in config.py). config.yaml excludes ^/tag/, ^/author/, ^/[a-z]{2}-[a-z]{2}/. 102 tests pass. Live re-run (2026-11-08 17:42 UTC, run 42506291195, commit 045711e): crawl ok, homepage + 50 English posts, all HTTP 200, 0 redirected/noindex/failed; 6545 sitemap URLs left out by the patterns; 61 requests, 60 s. Some old posts (e.g. 2014 Heartbleed posts) are in the newest 50 because the site bumped their lastmod. All 50 posts have canonical 'other' (sitemap URL without trailing slash vs canonical); task 6 should decide whether a trailing-slash-only difference counts.
+- Observation: posts show canonical "other" (sitemap lists /vole-mole without trailing slash, no redirect; canonical most likely the slash version). Tag/author/locale pages are canonical self. Author pages have no meta description; homepage title is 15 chars. These are real data for task 6 rules.
+- Posts have about 810 internal links each (under the 1000/page cap); tag/author pages 36-91.
+- Repo size: crawl.json with internal links is likely a few hundred KB per day (plus ~1 MB sitemap.json). Fine for retention, but every day stays in git history. Revisit in task 10 (e.g. store only link sets or gzip) if it grows too fast.
+- Duplicate titles/descriptions across pages are a diff/rules job (task 6), not collected separately.
+- Still open: Node 20 action versions (task 10), robotparser first-match order (task 11 docs), CRLF diffs, API keys and Telegram bot (PLAN.md §10 item 3).
+
+**Ready to commit**
+Committing is entirely up to Hakob (any split is fine). Optional hint: `task 3: on-page crawler (title, description, H1, canonical, noindex, redirects, internal links)`
+
+## Task 2: sitemap collector, snapshot writer/reader, retention (done)
+
+**What was done**
+- `src/seo_reviewer/collectors/sitemap.py`: `parse_sitemap` moved here from crawl_check.py (crawl_check imports it back; it now also returns `items` = [(loc, lastmod)]). Gzip handled with a 52 MB decompression cap (sitemap protocol limit is 50 MB). `collect_sitemap(client, cfg)` fetches sitemap_url through PoliteClient (robots enforced), handles sitemapindex and urlset, follows children (also a nested index, with loop protection) up to `sitemap.max_child_sitemaps`, stops at `sitemap.max_urls` unique URLs. Children are fetched freshest first by the index's lastmod, so caps cut the oldest sitemaps. `parse_lastmod()` turns W3C datetimes (date only, Z, +hh:mm, fractions) into aware UTC datetimes, for task 3's "newest N".
+- Sitemap record: `status` ok / partial / failed, `error`, `partial_reasons` (which child failed, which cap was hit), `root_kind`, `limits`, `url_count` (unique), `urls_with_lastmod`, `sitemaps` (per file: url, kind, status, http_status, error, entries, url_count, truncated, `urls` = {loc: lastmod or null}), `skipped_sitemaps`.
+- `src/seo_reviewer/snapshot.py`: `write_snapshot` writes data/snapshots/YYYY-MM-DD/{meta,robots,sitemap}.json (UTC date, compact JSON, sorted keys, atomic temp+rename, meta.json last). `build_meta` = schema_version, tool_version, date, run start/finish, site from config, every source's status+error (main adds requests_made). Readers: `list_snapshot_days`, `read_snapshot`, `read_meta`, `read_source`, `latest_previous_day(before)`, `last_day_with_status(source, before, statuses=("ok",))`. `apply_retention` deletes real-date folders older than retention_days, only direct children of snapshot_dir, never through symlinks.
+- `src/seo_reviewer/main.py`: `PYTHONPATH=src python -m seo_reviewer.main --collect-only [--config config.yaml] [--date YYYY-MM-DD]`. Collects robots + sitemap, writes the snapshot (snapshot_dir resolved relative to config.yaml), applies retention, prints a per-sitemap summary. Failed sources are recorded, not fatal. Exit 0 / 1 (snapshot write error) / 2 (config or argument error). Without --collect-only it exits 2 (other modes come in later tasks).
+- `.github/workflows/crawl-check.yml`: added a last step "Collect-only dry run (snapshot is not committed)". Running the workflow manually prints the real per-sitemap URL counts for blog.cloudflare.com (about 10 requests, 1 per second).
+- Tests: 83 total (37 new), no network: tests/test_sitemap.py (index, urlset, gzip, failed/unparseable child, root failure, all children failing, robots disallow, robots unreachable, both caps, nested index loops, gzip bomb guard, parse_lastmod cases), tests/test_snapshot.py (roundtrip, compactness, overwrite, bad names, junk/incomplete folders, previous day, last ok day, corrupt meta, retention incl. symlink safety), tests/test_main.py (end to end with a temp dir and fake network). Fixture XML in tests/fixtures/sitemap/. All pass on Python 3.12; imports checked on the device's Python 3.10.
+
+**Files created / changed**
+- New: `src/seo_reviewer/collectors/sitemap.py`, `src/seo_reviewer/snapshot.py`, `src/seo_reviewer/main.py`, `tests/test_sitemap.py`, `tests/test_snapshot.py`, `tests/test_main.py`, `tests/fixtures/sitemap/{index,posts,posts-2,tags}.xml`
+- Changed: `src/seo_reviewer/crawl_check.py` (parse_sitemap moved out), `tests/test_crawl_check.py` (expects the new `items` key), `.github/workflows/crawl-check.yml` (dry-run step), `DECISIONS.md` (2 entries), `STATUS.md`
+- config.yaml: sitemap.max_urls 5000 -> 15000 after the dry run. No new dependency.
+
+**Decisions made** (logged in DECISIONS.md)
+- Sitemap status semantics and per-child URL storage (a diff can still compare child sitemaps that were complete on both days when the record is partial).
+- Snapshot layout, compact sorted JSON, atomic writes, same-day rerun overwrites, retention safety rules.
+- lastmod is stored exactly as the site wrote it; parsing happens when needed.
+
+**Open issues**
+- RESOLVED: the dry run on GitHub Actions (2026-11-08 17:03 UTC, run 42503018547, 8 requests) hit the 5000 cap: sitemap index with 8 children, about 10,200 URLs in total (posts-5 100, archives 21, authors 1339, tags 776, posts 2000, posts-2 2000; posts-3 and posts-4 were skipped by the cap, likely ~2000 each). config.yaml sitemap.max_urls raised to 15000 (logged in DECISIONS.md). Next run should be status ok. Each daily sitemap.json is then about 1 MB.
+- Live dry run done via the crawl-check workflow (see above); robots ok, all fetched sitemaps parsed.
+- Still open from Task 1: Node 20 action versions (task 10), robotparser first-match order (task 11 docs), CRLF diffs, API keys and Telegram bot (PLAN.md §10 item 3).
+
+**Ready to commit**
+Committing is entirely up to Hakob (any split is fine). Optional hint: `task 2: sitemap collector, snapshots, retention, collect-only entry point`
+
+## Task 1: config, polite HTTP client, robots.txt, crawl check (done)
+
+**What was done**
+- `src/seo_reviewer/config.py`: loads config.yaml and validates every key the program reads (type and range), plus cross-checks (sitemap on the same host as base_url, min <= max, psi.strategies only mobile/desktop, links.method HEAD/GET). All problems are listed in one `ConfigError`. Strips a trailing slash from base_url.
+- `src/seo_reviewer/http_client.py`: `PoliteClient` with the User-Agent from config, global rate limit (requests_per_second), timeout, retries (max_retries) on connection errors, timeouts, 429 and 5xx with a short backoff, and robots.txt enforcement (fetched once per origin; disallowed URLs raise `RobotsDisallowed` and are never requested). HTTP 4xx/5xx are returned, not raised, so collectors can record them.
+- `src/seo_reviewer/collectors/robots.py`: `fetch_robots`, `parse_robots`, `collect_robots` (snapshot record: status ok/failed, http_status, error, mode, declared sitemaps, size, allowed per URL).
+- `src/seo_reviewer/crawl_check.py`: `python -m seo_reviewer.crawl_check [--config] [--json]`. Checks (a) robots.txt allows our UA for homepage and sitemap, (b) homepage is HTTP 200 real HTML with a title and no challenge markers (status 401/403/429/503, `cf-mitigated: challenge`, "Just a moment...", cf_chl_opt, PerimeterX/Incapsula markers; Cloudflare's normal `/cdn-cgi/challenge-platform/scripts/` is not treated as a challenge), (c) sitemap parses as sitemapindex/urlset (gzip ok, XML entities not resolved), and for an index the first child sitemap is fetched and parsed too. Prints PASS/FAIL per check, writes a GitHub step summary, exit 0/1 (2 = config error). Uses 4 requests on a sitemap-index site (robots, homepage, index, first child).
+- `.github/workflows/crawl-check.yml`: manual run (workflow_dispatch), Python 3.12, installs requirements, runs the unit tests, then the crawl check, then prints the JSON result. Read-only permissions.
+- Tests (`tests/`, 45 tests, no network, fake session and fake clock): config validation, robots parsing and status handling, rate limit, retries, robots enforcement, challenge detection, sitemap parsing. `pytest.ini` sets `pythonpath = src`. All pass on Python 3.12.
+- requirements.txt pinned to exact versions (see DECISIONS.md).
+
+**Live crawl check (GitHub Actions, 2026-11-08 16:42 UTC): PASS, 14 s**
+- robots: HTTP 200, parsed; homepage and sitemap allowed for our User-Agent.
+- homepage: HTTP 200, 195,671 bytes of HTML, title 'Cloudflare Blog', 190 links, no challenge.
+- sitemap: sitemapindex with 8 entries (8 with lastmod); first child urlset with 2000 entries (2000 with lastmod).
+- Result: target stays blog.cloudflare.com, no fallback switch needed.
+- Fix after the run: the step summary dropped "<sitemapindex>"/"<urlset>" because GitHub renders them as HTML tags. format_markdown now escapes < > &, with a test (46 tests).
+
+**Files created / changed**
+- New: `src/seo_reviewer/__init__.py`, `config.py`, `http_client.py`, `crawl_check.py`, `collectors/__init__.py`, `collectors/robots.py`, `tests/conftest.py`, `tests/test_config.py`, `tests/test_robots_and_client.py`, `tests/test_crawl_check.py`, `pytest.ini`, `.github/workflows/crawl-check.yml`
+- Changed: `requirements.txt` (exact pins), `DECISIONS.md` (2 entries), `.gitignore` (added `*.tmp`, `crawl-check.json`, `STATUS.md`; STATUS.md is now kept on disk only, by Hakob's choice), `STATUS.md`
+- config.yaml unchanged (target is still blog.cloudflare.com).
+
+**Decisions made**
+- robots.txt: 200 parse, 401/403 disallow all, other 4xx allow all, 5xx/network failure = source failed and nothing is crawled (logged in DECISIONS.md).
+- Challenge markers are deliberately specific to avoid false alarms on normal Cloudflare-served pages.
+- Code stays Python 3.10 compatible (Hakob's local VM has 3.10); CI uses 3.12.
+- Run locally with `PYTHONPATH=src python -m seo_reviewer.crawl_check` (no package install, no pyproject needed yet).
+
+**Open issues**
+- Actions annotation: actions/checkout@v4 and actions/setup-python@v5 target the deprecated Node.js 20 (forced to Node 24). Works today; bump to the Node 24 versions in task 10 when writing daily-review.yml (and update crawl-check.yml then).
+- Actions notice: ubuntu-latest moved to Ubuntu 26. No action needed; pin a runner version in task 10 only if something breaks.
+- urllib.robotparser uses first-match order inside a group, not Google's longest-match rule. Fine for the current targets; noted for docs/limitations.md (task 11).
+- From Task 0, still open: CRLF-only diffs on .gitignore/README.md; API keys and Telegram bot (PLAN.md §10 item 3).
+
+**Ready to commit**
+Committing is entirely up to Hakob (any split is fine). Optional hint: `task 1: config loader, polite HTTP client, robots collector, crawl check`
+
+## Task 0: bootstrap docs (done)
+
+**What was done**
+- PLAN.md marked APPROVED 2026-11-08; §10 items 1 and 2 marked done, item 3 (API keys / secrets) still open.
+- DECISIONS.md: added one entry, "all tools in PLAN.md section 5 approved with the plan".
+- Created config.yaml skeleton (site, crawler, sitemap, links, psi, thresholds, llm, delivery, storage, runtime). Target blog.cloudflare.com, fallback Smashing Magazine kept as a comment.
+- Created .env.example (PSI_API_KEY, GEMINI_API_KEY, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID; empty values).
+- Created requirements.txt (requests, beautifulsoup4, lxml, PyYAML, pytest) with minimum versions; exact pins in task 1.
+- Read-only checks: `.env` is ignored (.gitignore line 153); `.env.example` is NOT ignored. config.yaml parses as valid YAML.
+
+**Files created / changed**
+- New: STATUS.md, config.yaml, .env.example, requirements.txt
+- Changed: PLAN.md (status + §10), DECISIONS.md (one entry)
+- Already untracked before this task, include in the commit: CLAUDE.md (edited by Hakob), PLAN.md, DECISIONS.md
+
+**Decisions made**
+- New files use LF line endings (matching how Git stores files in the index).
+- Threshold values in config.yaml (title 30-60, description 70-160, lab tolerances) are starting defaults; task 6 may tune them, logged in DECISIONS.md.
+
+**Open issues**
+- .gitignore and README.md show as modified, but the only difference is CRLF vs LF line endings (`git diff --ignore-cr-at-eol` is empty). No content changes. Options: leave them out of the commit (`git restore .gitignore README.md`, done by Hakob), or add a `.gitattributes` with `* text=auto eol=lf` (new file, needs Hakob's OK).
+- API keys and Telegram bot still to be created (PLAN.md §10 item 3).
+- Repo must be pushed to GitHub before task 1's crawl-check workflow can run (Hakob pushes).
+
+**Ready to commit**
+Suggested commit message: `task 0: bootstrap plan, status, decisions, config skeleton`
+
+## Next thread: Task 11 (ready-to-paste prompt)
+
+```
+Task 11 of the Daily SEO Reviewer. Work in the daily-seo-reviewer repo folder.
+Read PLAN.md and STATUS.md only (plus CLAUDE.md, config.yaml, docs/limitations.md, the data/snapshots/ days and reports/ committed by the daily-review workflow, and the src/ files you need). Follow CLAUDE.md strictly.
+Never run any git write command. Committing is up to me.
+
+First checks (Actions logs of daily-review can be read):
+1. Task 10 live checks: did the first manual run and the scheduled runs commit "report: YYYY-MM-DD" and send Telegram? Did Gemini write the summary on any of them (summary.json source/reason)? Size of one data/snapshots/DAY folder.
+2. At least 4 days of history should exist before recording.
+
+Goal (PLAN.md section 8, task 11): docs for the deliverables, using the real history:
+- docs/data-sources.md (every source: what, where from, limits; Gemini free-tier data-use note)
+- docs/how-it-works.md (pipeline, diff/severity rules, summary validator, delivery, workflow)
+- data/README.md (each file, schema, source, link to a sample day)
+- docs/limitations.md (complete it: no JS rendering, no Search Console, 50-page sample, PSI noise, single site, robotparser first-match order, Gemini availability)
+- docs/recording-script.md with timed segments (run 1:30, one review 1:30, logic 2:00, build/tools/data 2:30, delivery 1:00, limitations 1:30)
+Ask me before adding any tool or dependency not in PLAN.md section 5.
+At the end update STATUS.md (done, files, decisions, open issues).
+```
